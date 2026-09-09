@@ -2,7 +2,7 @@
 # `tofu -chdir=cloudflare output tunnel_id` (API-created named tunnel). The
 # credentials Secret (`cloudflared-credentials`, ns default) is created by the
 # k8s-secrets-bootstrap oneshot from an age file — NOT defined in this repo.
-# Every *.c.hero.rehab hostname routes to the traefik Service; anything
+# Every *.hero-rehab.xyz hostname routes to the traefik Service; anything
 # unknown hits the 404 fallback and never reaches Traefik.
 apiVersion: v1
 kind: ConfigMap
@@ -14,6 +14,6 @@ data:
     tunnel: 1e6bb9a4-8a99-4eaa-a029-105155bdeccd
     credentials-file: /etc/cloudflared/creds.json
     ingress:
-      - hostname: "*.c.hero.rehab"
+      - hostname: "*.hero-rehab.xyz"
         service: http://traefik.traefik.svc:80
       - service: http_status:404

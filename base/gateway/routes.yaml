@@ -10,7 +10,7 @@ spec:
   parentRefs:
     - name: timestone-gateway
   hostnames:
-    - "whoami.c.hero.rehab"
+    - "whoami.hero-rehab.xyz"
   rules:
     - backendRefs:
         - name: whoami
@@ -25,7 +25,7 @@ spec:
   parentRefs:
     - name: timestone-gateway
   hostnames:
-    - "temporal.c.hero.rehab"
+    - "temporal.hero-rehab.xyz"
   rules:
     - backendRefs:
         - name: temporal-web

@@ -12,5 +12,5 @@ spec:
     - name: http
       port: 80
       protocol: HTTP
-      # No hostname filter — every *.c.hero.rehab HTTPRoute attaches here; the
+      # No hostname filter — every *.hero-rehab.xyz HTTPRoute attaches here; the
       # cloudflared ingress fallback (http_status:404) catches unknown hosts.

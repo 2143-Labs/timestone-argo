@@ -1,5 +1,5 @@
 # Phase 1 smoke-test endpoint — proves the whole path (DNS → tunnel → Traefik
-# Gateway → HTTPRoute → Service → pod). Served on whoami.c.hero.rehab.
+# Gateway → HTTPRoute → Service → pod). Served on whoami.hero-rehab.xyz.
 # Image pinned (never :latest). No affinity — timestone nodes carry no
 # workload-type label (home template minus nodeAffinity/scaledobject).
 apiVersion: apps/v1

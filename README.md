@@ -41,10 +41,10 @@ clusters/           # per-leg values for the future OVH phase (see its README)
 
 ## Phase 1 live checklist
 
-- [ ] `https://whoami.c.hero.rehab` → 200 + Hostname body (Hetzner)
-- [ ] `https://temporal.c.hero.rehab` → 200
+- [ ] `https://whoami.hero-rehab.xyz` → 200 + Hostname body (Hetzner)
+- [ ] `https://temporal.hero-rehab.xyz` → 200
 - [ ] Gateway `timestone-gateway` `Programmed=True`
-- [ ] `https://doesnotexist.c.hero.rehab` → 404 (tunnel fallback)
+- [ ] `https://doesnotexist.hero-rehab.xyz` → 404 (tunnel fallback)
 - [ ] Both nodes survive rolling `nixos-rebuild switch`; auto-update timer armed
 - [ ] Backups wave: intentionally omitted (no home-S3 rclone age file this phase)
 
@@ -56,7 +56,7 @@ clusters/           # per-leg values for the future OVH phase (see its README)
   (never `:latest`); upgrades are separate follow-up commits.
 - Wave order is annotation-driven (`argocd.argoproj.io/sync-wave`); file location
   under `wave-N/` is cosmetic (`root-app` recurses).
-- Domain: `*.c.hero.rehab` (CF-terminated TLS — no cert-manager in-cluster).
+- Domain: `*.hero-rehab.xyz` (CF-terminated TLS — no cert-manager in-cluster).
 - Cluster content targets ns `default`; helm charts create `argocd`/`cnpg-system`/
   `traefik`.
 
