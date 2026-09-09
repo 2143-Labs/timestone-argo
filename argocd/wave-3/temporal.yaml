@@ -1,0 +1,117 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: temporal
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: temporal
+    repoURL: https://go.temporal.io/helm-charts
+    # Home-proven pin, copied from argo/apps/temporal.yaml (values verified
+    # against it; chart 1.6.0 exists upstream — bump is a follow-up commit).
+    targetRevision: 1.5.0
+    helm:
+      releaseName: temporal
+      values: |
+        fullnameOverride: "temporal"
+        server:
+          config:
+            persistence:
+              defaultStore: default
+              visibilityStore: visibility
+              numHistoryShards: 512
+              datastores:
+                default:
+                  sql:
+                    createDatabase: false
+                    manageSchema: true
+                    pluginName: postgres12
+                    databaseName: temporal
+                    connectAddr: "timestone-rw:5432"
+                    connectProtocol: "tcp"
+                    user: temporal
+                    existingSecret: temporal-db-password
+                    secretKey: password
+                    maxConns: 20
+                    maxConnLifetime: "1h"
+                visibility:
+                  sql:
+                    createDatabase: false
+                    manageSchema: true
+                    pluginName: postgres12
+                    databaseName: temporal_visibility
+                    connectAddr: "timestone-rw:5432"
+                    connectProtocol: "tcp"
+                    user: temporal
+                    existingSecret: temporal-db-password
+                    secretKey: password
+                    maxConns: 20
+                    maxConnLifetime: "1h"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          # frontend is ClusterIP — TLS terminates at the Cloudflare edge and
+          # the web UI is reached in-cluster via the wave-4 HTTPRoute; no
+          # LoadBalancer (home used metallb — not present here).
+          frontend:
+            service:
+              type: ClusterIP
+          worker:
+            enabled: true
+            resources:
+              requests:
+                cpu: 100m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+
+        shims:
+          dockerize: false
+          elasticsearchTool: false
+
+        web:
+          enabled: true
+          # Plaintext in-cluster; CSRF cookie insecure matches http:// origin.
+          # (Home's oauth forward-header env is deleted — no oauth2-proxy here.)
+          additionalEnv:
+            - name: TEMPORAL_TLS_ENABLED
+              value: "false"
+            - name: TEMPORAL_AUTH_ENABLED
+              value: "false"
+            - name: TEMPORAL_CSRF_COOKIE_INSECURE
+              value: "true"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+        admintools:
+          enabled: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

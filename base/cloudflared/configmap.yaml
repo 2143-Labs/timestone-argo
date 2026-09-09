@@ -1,0 +1,18 @@
+# Tunnel routing config. `tunnel` id + the credentials Secret are Stage 1
+# artifacts; tunnel:<uuid> is filled from `cloudflared tunnel create timestone`
+# BEFORE the first push (Stage 1.1). Every *.c.hero.rehab hostname routes to
+# the traefik Service; anything unknown hits the 404 fallback and never
+# reaches Traefik.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: default
+data:
+  config.yml: |
+    tunnel: <TUNNEL_ID>
+    credentials-file: /etc/cloudflared/creds.json
+    ingress:
+      - hostname: "*.c.hero.rehab"
+        service: http://traefik.traefik.svc:80
+      - service: http_status:404

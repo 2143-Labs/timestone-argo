@@ -1,0 +1,16 @@
+# The single routing source. Gateway + all HTTPRoutes live in ns `default` so
+# Gateway API's default same-namespace attachment applies (no AllowedRoutes).
+# Plain HTTP :80 only — TLS terminates at the Cloudflare edge, so no cert refs.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: timestone-gateway
+  namespace: default
+spec:
+  gatewayClassName: traefik
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      # No hostname filter — every *.c.hero.rehab HTTPRoute attaches here; the
+      # cloudflared ingress fallback (http_status:404) catches unknown hosts.

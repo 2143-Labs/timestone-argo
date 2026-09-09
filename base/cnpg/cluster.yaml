@@ -1,0 +1,46 @@
+# Timestone CNPG Cluster — single instance pinned to the db node (CX33) via the
+# k3s agent node-label timestone.io/workload=primary (set at join time).
+#
+# Adapted from argo/workloads/temporal-db/cnpg-cluster.yaml:
+#   - name timestone; storage local-path (8Gi + 4Gi wal) — no Longhorn Phase 1
+#   - postgres 16-series image current at execution (16.15 as of 2026-09-09);
+#     major stays 16 to match the Temporal chart's expectations
+#   - NO backup section this phase (CronJob wave is gated on home-S3 creds)
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: timestone
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.15
+  nodeSelector:
+    timestone.io/workload: primary
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  storage:
+    size: 8Gi
+    storageClass: local-path
+  walStorage:
+    size: 4Gi
+    storageClass: local-path
+  bootstrap:
+    initdb:
+      database: temporal
+      owner: temporal
+      postInitSQL:
+        - CREATE DATABASE temporal_visibility OWNER temporal
+  managed:
+    roles:
+      - name: temporal
+        ensure: present
+        login: true
+        passwordSecret:
+          name: temporal-db-password
+  postgresql:
+    pg_hba:
+      - host all all 0.0.0.0/0 scram-sha-256

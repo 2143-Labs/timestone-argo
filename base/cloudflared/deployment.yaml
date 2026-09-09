@@ -1,0 +1,52 @@
+# Named-tunnel connector pods. Credentials come from the `cloudflared-credentials`
+# Secret in ns default, created by the k8s-secrets-bootstrap oneshot (age file)
+# — NOT defined in this repo. Mounted as /etc/cloudflared/creds.json.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  labels:
+    app: cloudflared
+spec:
+  revisionHistoryLimit: 3
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:2026.8.3 # pinned — never :latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config.yml
+            - --no-autoupdate
+            - run
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/
+              readOnly: true
+      volumes:
+        - name: config
+          projected:
+            sources:
+              - configMap:
+                  name: cloudflared-config
+              - secret:
+                  name: cloudflared-credentials
+                  items:
+                    - key: credentials.json
+                      path: creds.json

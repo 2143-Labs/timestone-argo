@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-operator
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: cloudnative-pg
+    repoURL: https://cloudnative-pg.github.io/charts
+    # Latest stable as of 2026-09 (chart 0.29.0 → operator 1.30.0). Greenfield
+    # platform: do NOT reuse the home repo's older 0.28.3 pin. The chart
+    # supports only the operator release it ships.
+    targetRevision: 0.29.0
+    helm:
+      releaseName: cnpg-operator
+      values: |
+        config:
+          clusterWide: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

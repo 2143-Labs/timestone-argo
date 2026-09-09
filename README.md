@@ -1,8 +1,8 @@
 # timestone-argo — Timestone GitOps (ArgoCD)
 
-What runs *in* the Timestone clusters: app-of-apps wave manifests, base workload
-manifests, per-cluster values. One repo, two ArgoCD instances (Hetzner leg + OVH
-leg), the 59s pattern. Cluster *provisioning* lives in `../timestone-tofu/`.
+What runs *in* the Timestone clusters: app-of-apps wave Applications, base
+workload manifests. One repo, two ArgoCD instances (Hetzner leg + OVH leg), the
+59s pattern. Cluster *provisioning* lives in `../timestone-tofu/`.
 
 Canonical architecture & cost: [`../timestone.md`](../timestone.md).
 
@@ -10,42 +10,64 @@ Canonical architecture & cost: [`../timestone.md`](../timestone.md).
 
 | Cluster | Destination | ArgoCD instance | Syncs |
 |---|---|---|---|
-| Hetzner (nbg1) | `ts-hz-ctl`/`ts-hz-db` | in-cluster (self-managed) | whole repo, `clusters/hetzner` values |
-| OVH (GRA) | `ts-ov-ctl`/`ts-ov-db` | in-cluster (self-managed) | whole repo, `clusters/ovh` values |
+| Hetzner (nbg1) | `ts-hz-ctl`/`ts-hz-db` | in-cluster (installed by a NixOS oneshot) | whole repo via `argocd/root-app.yaml` |
+| OVH (GRA) | `ts-ov-ctl`/`ts-ov-db` | future phase | whole repo (per-leg values) |
 
-Home replay/general-compute workloads remain in the existing `argo/` repo (Temporal
-workers attached to the EU Temporal over the tailnet) — NOT in this repo.
+Home replay/general-compute workloads stay in the existing `argo/` repo — NOT here.
 
-## Layout (planned — populated during build)
+## Layout
 
 ```
 argocd/
-  root-app.yaml     # App-of-Apps → path argocd, recurse (applied once per cluster
-                    #   at bootstrap; NOT self-managed, like 59s)
-  wave--2/          # namespaces
-  wave-0/           # cilium, cert-manager(edge-terminated → likely minimal)
-  wave-1/           # cnpg-operator, traefik
-  wave-2/           # cloudflared (tunnel connector per leg)
-  wave-3/           # temporal + temporal standby (OVH: scaled 0)
-  wave-4/           # applications: frontend, matchmaking, admin
-  wave-5/           # monitoring (ship to home stack), backups
-base/               # shared manifests per component (CNPG cluster, Temporal
-                    #   values, app deployments, ingress → traefik Gateway)
-clusters/
-  hetzner/          # values: db-primary=true, temporal-active, cnpg primary
-  ovh/              # values: db-replica=true, temporal-standby(scaled 0), apps
+  root-app.yaml     # App-of-Apps → path argocd, recurse (applied ONCE per cluster
+                    #   at bootstrap by the argocd-bootstrap oneshot; NOT
+                    #   self-managed, mirrors the 59s pattern)
+  wave--5..0/       # sync-wave annotation ordering:
+                    #   -5 gateway-api-crds (external repo, v1.5.1)
+                    #    0 traefik (helm 41.5.0 → v3.7.13, kubernetesGateway provider)
+                    #    1 cnpg-operator (helm 0.29.0 → operator 1.30.0)
+                    #    2 cnpg-cluster (base/cnpg)
+                    #    3 temporal (helm 1.5.0)
+                    #    4 gateway (base/gateway) + whoami (base/apps/whoami)
+                    #    5 cloudflared (base/cloudflared)
+base/               # shared plain YAML per component (dir = one ArgoCD child app)
+  cnpg/cluster.yaml             # CNPG Cluster `timestone` (single instance, db node)
+  gateway/gateway.yaml          # Gateway `timestone-gateway` (http :80, ns default)
+  gateway/routes.yaml           # HTTPRoutes whoami + temporal → web UI :8080
+  apps/whoami/{deployment,service}.yaml
+  cloudflared/{configmap,deployment}.yaml
+clusters/           # per-leg values for the future OVH phase (see its README)
 ```
 
-## Wave ordering notes
+## Phase 1 live checklist
 
-- CNPG operator before clusters; CNPG primary/replica role set per cluster values.
-- Temporal on Hetzner active; OVH keeps the same manifests with `replicas: 0`
-  (pre-staged standby for DR §7 of timestone.md).
-- cloudflared last-ish: ingress must exist before the tunnel points at it.
+- [ ] `https://whoami.c.hero.rehab` → 200 + Hostname body (Hetzner)
+- [ ] `https://temporal.c.hero.rehab` → 200
+- [ ] Gateway `timestone-gateway` `Programmed=True`
+- [ ] `https://doesnotexist.c.hero.rehab` → 404 (tunnel fallback)
+- [ ] Both nodes survive rolling `nixos-rebuild switch`; auto-update timer armed
+- [ ] Backups wave: intentionally omitted (no home-S3 rclone age file this phase)
 
 ## Conventions (from 59s / home argo)
 
-- No placeholder Secrets anywhere; manifests reference secrets by name only
-  (injected by k8s-secrets-bootstrap).
-- Per-cluster variance via `clusters/<name>/` values; shared content in `base/`.
-- Domain: `*.c.hero.rehab` (CF-terminated TLS — no wildcard cert needed in-cluster).
+- No placeholder Secrets anywhere — manifests reference secrets by name only
+  (injected by the `k8s-secrets-bootstrap` oneshot from agenix files).
+- Every helm `targetRevision` + container image is pinned to a resolved version
+  (never `:latest`); upgrades are separate follow-up commits.
+- Wave order is annotation-driven (`argocd.argoproj.io/sync-wave`); file location
+  under `wave-N/` is cosmetic (`root-app` recurses).
+- Domain: `*.c.hero.rehab` (CF-terminated TLS — no cert-manager in-cluster).
+- Cluster content targets ns `default`; helm charts create `argocd`/`cnpg-system`/
+  `traefik`.
+
+## Applied versions (2026-09-09)
+
+| Component | Pin |
+|---|---|
+| Gateway API CRDs | v1.5.1 (home-proven) |
+| Traefik chart | 41.5.0 (app v3.7.13) |
+| CNPG chart | 0.29.0 (operator 1.30.0) |
+| CNPG postgres | ghcr.io/cloudnative-pg/postgresql:16.15 |
+| Temporal chart | 1.5.0 |
+| whoami | traefik/whoami:v1.10.4 |
+| cloudflared | 2026.8.3 |

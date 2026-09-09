@@ -1,0 +1,56 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: traefik
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: traefik
+    repoURL: https://helm.traefik.io/traefik
+    # Resolved 2026-09-09 from the helm.traefik.io index: chart 41.5.0 ships
+    # traefik v3.7.13. Upgrades are separate follow-up commits, never "latest".
+    targetRevision: 41.5.0
+    helm:
+      releaseName: traefik
+      values: |
+        providers:
+          # CRITICAL: chart default is false — without this every HTTPRoute is
+          # silently ignored. Enabling it makes the chart create the Gateway-API
+          # RBAC (ClusterRole) itself.
+          kubernetesGateway:
+            enabled: true
+          kubernetesCRD:
+            enabled: true
+          kubernetesIngress:
+            enabled: false
+        # With providers.kubernetesGateway.enabled the chart would deploy its OWN
+        # default Gateway (chart `gateway.enabled` defaults true). Disable it:
+        # `timestone-gateway` (wave-4, ns default) is the single routing source.
+        gateway:
+          enabled: false
+        # No hostNetwork/LoadBalancer — cloudflared (same cluster) reaches the
+        # traefik Service via ClusterIP.
+        service:
+          type: ClusterIP
+        ports:
+          web:
+            port: 80
+            targetPort: 80
+            exposedPort: 80
+        deployment:
+          replicas: 1
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: traefik
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

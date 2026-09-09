@@ -1,0 +1,58 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg-cluster
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: base/cnpg
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+  ignoreDifferences:
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      # ServerSideApply=true: jqPathExpressions are the supported form.
+      # The CNPG operator writes these fields back into spec on reconcile;
+      # the list is the complete set observed on the home cluster (2026-08-05),
+      # copied verbatim from argo/apps/temporal-db.yaml.
+      jqPathExpressions:
+        - .spec.enablePDB
+        - .spec.enableSuperuserAccess
+        - .spec.failoverDelay
+        - .spec.logLevel
+        - .spec.maxSyncReplicas
+        - .spec.minSyncReplicas
+        - .spec.monitoring
+        - .spec.affinity
+        - .spec.primaryUpdateStrategy
+        - .spec.primaryUpdateMethod
+        - .spec.backup
+        - .spec.postgresUID
+        - .spec.postgresGID
+        - .spec.postgresql
+        - .spec.probes
+        - .spec.replicationSlots
+        - .spec.smartShutdownTimeout
+        - .spec.startDelay
+        - .spec.stopDelay
+        - .spec.switchoverDelay
+        - .spec.storage.resizeInUseVolumes
+        - .spec.walStorage.resizeInUseVolumes
+        - .spec.bootstrap.initdb.encoding
+        - .spec.bootstrap.initdb.localeCType
+        - .spec.bootstrap.initdb.localeCollate
+        - .spec.managed.roles

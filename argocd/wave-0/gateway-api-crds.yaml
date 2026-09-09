@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gateway-api-crds
+  namespace: argocd
+  annotations:
+    # Install Gateway API CRDs before the traefik Gateway provider starts.
+    argocd.argoproj.io/sync-wave: "-5"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kubernetes-sigs/gateway-api.git
+    # v1.5.1 — the pin the home cluster runs in production with the same Traefik
+    # chart family; copied verbatim from argo/apps/gateway-api-crds.yaml.
+    targetRevision: v1.5.1
+    path: config/crd/standard
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  ignoreDifferences:
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /metadata/annotations
+        - /status
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicy
+      jqPathExpressions:
+        - .metadata.annotations
+        - .status
+    - group: admissionregistration.k8s.io
+      kind: ValidatingAdmissionPolicyBinding
+      jqPathExpressions:
+        - .metadata.annotations
+        - .status
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - RespectIgnoreDifferences=true
+      - ServerSideApply=true
