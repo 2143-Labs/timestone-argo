@@ -11,7 +11,7 @@ metadata:
   namespace: default
 data:
   config.yml: |
-    tunnel: <TUNNEL_ID>
+    tunnel: 1e6bb9a4-8a99-4eaa-a029-105155bdeccd
     credentials-file: /etc/cloudflared/creds.json
     ingress:
       - hostname: "*.c.hero.rehab"
