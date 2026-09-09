@@ -1,0 +1,6 @@
+# Helm/generated — none expected; plain YAML + kustomize only
+*.tgz
+
+# Local
+.envrc
+.DS_Store

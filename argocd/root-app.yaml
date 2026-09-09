@@ -1,0 +1,33 @@
+---
+# Root Application — entrypoint for App-of-Apps (Timestone).
+# Points at argocd/ so ArgoCD recursively discovers child Applications organized by
+# sync-wave (wave-N/). Mirrors the 2143-59s root-app pattern.
+#
+# This is the ONE Application NOT managed by ArgoCD itself: it is applied
+# imperatively once per cluster during bootstrap (tofu → nixos → k3s → argocd),
+# with the destination cluster URL set to that cluster's own API server.
+#
+# repoURL: fill with the real GitHub remote (2143-Labs/timestone-argo) at push time.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  annotations:
+    resources-finalizer.argocd.argoproj.io: "true"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo # placeholder — set on first push
+    targetRevision: HEAD
+    path: argocd
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc # each cluster's own in-cluster ArgoCD
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
