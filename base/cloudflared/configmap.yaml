@@ -4,6 +4,9 @@
 # k8s-secrets-bootstrap oneshot from an age file — NOT defined in this repo.
 # Every *.c.hero.rehab hostname routes to the traefik Service; anything
 # unknown hits the 404 fallback and never reaches Traefik.
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: cloudflared-config
   namespace: default
 data:

@@ -1,0 +1,27 @@
+name: manifest validate
+
+# Structural CI for the GitOps repo. No secrets needed: any authorized push to
+# main IS the deploy (ArgoCD syncs from the repo automatically), so this guard
+# runs before merge to catch YAML breakage, missing sync-waves, and wrong
+# namespaces. Runs on every PR + push.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install pyyaml
+        run: pip install --quiet pyyaml
+      - name: validate manifests
+        run: python .github/validate-manifests.py

@@ -71,3 +71,12 @@ clusters/           # per-leg values for the future OVH phase (see its README)
 | Temporal chart | 1.5.0 |
 | whoami | traefik/whoami:v1.10.4 |
 | cloudflared | 2026.8.3 |
+
+## CI & multi-user
+
+- `.github/workflows/validate.yml` — structural manifest check on every PR +
+  push (YAML parse, sync-wave annotations, repoURLs, base/ namespaces). No
+  secrets needed.
+- **A push to `main` IS the deploy**: ArgoCD syncs this repo automatically, so
+  any 2143-Labs member with write access can ship cluster content — the CI
+  validator is the gate before merge. No per-user machine or key setup.
