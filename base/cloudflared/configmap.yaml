@@ -1,11 +1,9 @@
-# Tunnel routing config. `tunnel` id + the credentials Secret are Stage 1
-# artifacts; tunnel:<uuid> is filled from `cloudflared tunnel create timestone`
-# BEFORE the first push (Stage 1.1). Every *.c.hero.rehab hostname routes to
-# the traefik Service; anything unknown hits the 404 fallback and never
-# reaches Traefik.
-apiVersion: v1
-kind: ConfigMap
-metadata:
+# Tunnel routing config. `tunnel` id comes from
+# `tofu -chdir=cloudflare output tunnel_id` (API-created named tunnel). The
+# credentials Secret (`cloudflared-credentials`, ns default) is created by the
+# k8s-secrets-bootstrap oneshot from an age file — NOT defined in this repo.
+# Every *.c.hero.rehab hostname routes to the traefik Service; anything
+# unknown hits the 404 fallback and never reaches Traefik.
   name: cloudflared-config
   namespace: default
 data:
