@@ -19,8 +19,8 @@ spec:
       labels:
         app: whoami
     spec:
+      # NOTE: traefik/whoami runs as root — no runAsNonRoot on pod or container.
       securityContext:
-        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
