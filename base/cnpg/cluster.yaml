@@ -13,8 +13,10 @@ metadata:
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16.15
-  nodeSelector:
-    timestone.io/workload: primary
+  affinity:
+    # Pin the single instance to the db node (k3s agent label set at join).
+    nodeSelector:
+      timestone.io/workload: primary
   resources:
     requests:
       cpu: 500m
