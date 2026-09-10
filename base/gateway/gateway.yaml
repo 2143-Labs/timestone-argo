@@ -1,5 +1,6 @@
-# The single routing source. Gateway + all HTTPRoutes live in ns `default` so
-# Gateway API's default same-namespace attachment applies (no AllowedRoutes).
+# The single routing source. Gateway + all HTTPRoutes live in ns `default`;
+# same-namespace attachment is declared explicitly because the Gateway API
+# defaulting (from: Same) otherwise re-appears and drifts ArgoCD OutOfSync.
 # Plain HTTP :80 only — TLS terminates at the Cloudflare edge, so no cert refs.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -11,6 +12,6 @@ spec:
   listeners:
     - name: http
       port: 80
-      protocol: HTTP
-      # No hostname filter — every *.hero-rehab.xyz HTTPRoute attaches here; the
-      # cloudflared ingress fallback (http_status:404) catches unknown hosts.
+      allowedRoutes:
+        namespaces:
+          from: Same
