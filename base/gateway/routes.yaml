@@ -1,15 +1,16 @@
 # HTTPRoutes behind the timestone-gateway (ns default, same-namespace attach).
-# Written in the FULL Gateway-API applied shape (group/kind/weight, default
-# PathPrefix match) so the API defaulting doesn't re-introduce drift.
+# Shape notes: parentRefs carries only group/kind/name (there is NO weight on
+# parentRefs — that is backendRefs-only); rules include the defaulted PathPrefix
+# match. Written to match the Gateway API's applied shape so ArgoCD doesn't
+# drift.
 #
 # TWO-LAYER EXPOSURE MODEL:
 #   PUBLIC  — plain hero-rehab.xyz hostnames listed in the cloudflared tunnel
 #             ingress allowlist (whoami below).
-#   PRIVATE — *.int.hero-rehab.xyz hostnames: reachable only after Cloudflare
-#             Zero Trust Access authentication (Access app is in the tofu repo).
-#             Temporal's web UI lives here for operators; WORKLOADS do not use
-#             HTTP at all — they use temporal-frontend.default.svc:7233 (gRPC)
-#             in-cluster.
+#   PRIVATE — *.int.hero-rehab.xyz hostnames: gated by Cloudflare Zero Trust
+#             Access at the edge before any request reaches the cluster
+#             (temporal web UI for operators). WORKLOADS do not use HTTP at all
+#             — they use temporal-frontend.default.svc:7233 (gRPC) in-cluster.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -20,7 +21,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: timestone-gateway
-      weight: 1
   hostnames:
     - "whoami.hero-rehab.xyz"
   rules:
@@ -45,7 +45,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: Gateway
       name: timestone-gateway
-      weight: 1
   hostnames:
     - "temporal.int.hero-rehab.xyz"
   rules:
