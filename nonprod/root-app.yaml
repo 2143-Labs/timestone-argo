@@ -1,0 +1,33 @@
+---
+# NONPROD root Application — the home-cluster environment.
+#
+# Applied ONCE to the HOME cluster's ArgoCD (see nonprod/README.md). It is NOT
+# referenced by the prod root app: prod syncs `argocd/` only, so this tree and
+# the prod tree can never bleed into each other.
+#
+# repoURL/destination are the home cluster's own in-cluster ArgoCD; hostnames and
+# values for nonprod services live in this tree + ../clusters/nonprod/.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: timestone-nonprod-root
+  namespace: argocd
+  annotations:
+    resources-finalizer.argocd.argoproj.io: "true"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo
+    targetRevision: HEAD
+    path: nonprod
+    directory:
+      recurse: true
+      exclude: "root-app.yaml" # never let the root app manage itself
+  destination:
+    server: https://kubernetes.default.svc # home cluster in-cluster ArgoCD
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

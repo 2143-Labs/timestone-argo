@@ -1,14 +1,22 @@
-# clusters/ — per-cluster values (future OVH phase)
+# clusters/ — per-environment values
 
-One values set per leg, so the two legs stay identical except role flags (DR +
-price-switch become config-only, per timestone.md §7-8).
+One directory per environment. The env determines *where* the manifests land and
+*which* hostnames/values they use; the manifests themselves live in `base/`
+(shared shape) and are referenced from each env's tree.
 
-Phase 1 (Hetzner-only) does NOT consume this directory — every wave Application
-carries its values inline. When OVH opens:
+| Env | Tree | Cluster | Domain | Notes |
+|---|---|---|---|---|
+| `prod/` | `../argocd/` (root app, recurse) | Hetzner `ts-hz-*` | `hero-rehab.xyz` → `hero.rehab` after demo | real data — HA + backups required |
+| `nonprod/` | `../nonprod/` (root app, recurse) | home cluster | a home domain (TBD) | synthetic data only (home is US-resident) |
 
-```
-hetzner/values.yaml    # cnpg: role=primary · temporal: replicas=1 (active)
-ovh/values.yaml        # cnpg: role=replica · temporal: replicas=0 (standby)
-```
+## Values that differ per environment
 
-Nothing here yet.
+- `hostname` / domain suffix (prod: `hero-rehab.xyz`; nonprod: home domain)
+- CNPG shape: prod = replica(s) + backups; nonprod = single instance, no backups
+- Temporal replicas: prod ≥ 1 per service; nonprod may scale down / share
+- ingress: prod = Cloudflare tunnel allowlist; nonprod = home Gateway/ingress
+- image pins: same tags across envs (promotion = a commit that bumps the pin)
+
+Nothing is templated yet: Phase 1 ships inline values per wave Application.
+When env-specific variance grows, introduce a kustomize overlay per env here
+(`clusters/<env>/kustomization.yaml`) and point the env trees at it.

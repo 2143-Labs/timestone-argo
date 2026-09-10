@@ -1,19 +1,22 @@
 # timestone-argo — Timestone GitOps (ArgoCD)
 
 What runs *in* the Timestone clusters: app-of-apps wave Applications, base
-workload manifests. One repo, two ArgoCD instances (Hetzner leg + OVH leg), the
-59s pattern. Cluster *provisioning* lives in `../timestone-tofu/`.
+workload manifests. One repo drives both environments; cluster *provisioning*
+lives in `../timestone-tofu/`.
 
 Canonical architecture & cost: [`../timestone.md`](../timestone.md).
 
-## Fleet
+## Environments
 
-| Cluster | Destination | ArgoCD instance | Syncs |
-|---|---|---|---|
-| Hetzner (nbg1) | `ts-hz-ctl`/`ts-hz-db` | in-cluster (installed by a NixOS oneshot) | whole repo via `argocd/root-app.yaml` |
-| OVH (GRA) | `ts-ov-ctl`/`ts-ov-db` | future phase | whole repo (per-leg values) |
+| Env | Cluster | Domain | Tree | Data | Notes |
+|---|---|---|---|---|---|
+| **prod** | Hetzner `ts-hz-ctl`/`ts-hz-db` (EU compute; Cloudflare = edge only) | `hero-rehab.xyz` now → `hero.rehab` after the demo | `argocd/` (+ `base/`) | real | HA + backups required |
+| **nonprod** | home cluster (no Cloudflare in the path) | a home domain / tailnet (TBD) | `nonprod/` | synthetic only | home is US-resident — never real client data |
 
-Home replay/general-compute workloads stay in the existing `argo/` repo — NOT here.
+The two trees are siblings on purpose: the prod root Application syncs
+`path: argocd` with `recurse: true`, so anything under `argocd/` lands in prod.
+Nonprod lives in `nonprod/` with its own root Application, applied once to the
+home cluster's ArgoCD — same repo, zero cross-talk.
 
 ## Layout
 
@@ -37,7 +40,10 @@ base/               # shared plain YAML per component (dir = one ArgoCD child ap
                                 #   explicit allowlist (Temporal is internal-only)
   apps/whoami/{deployment,service}.yaml
   cloudflared/{configmap,deployment}.yaml
-clusters/           # per-leg values for the future OVH phase (see its README)
+nonprod/            # NONPROD env tree (home cluster): own root-app + wave apps,
+                    #   applied once to the home ArgoCD. Sibling of argocd/ so the
+                    #   prod root (recurse over argocd/) can never sync it.
+clusters/           # per-environment values + the values contract (see its README)
 ```
 
 ## Phase 1 live checklist (2026-09-09 — Hetzner leg deployed)
