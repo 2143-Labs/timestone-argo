@@ -1,16 +1,18 @@
 # HTTPRoutes behind the timestone-gateway (ns default, same-namespace attach).
 # Shape notes: parentRefs carries only group/kind/name (there is NO weight on
 # parentRefs — that is backendRefs-only); rules include the defaulted PathPrefix
-# match. Written to match the Gateway API's applied shape so ArgoCD doesn't
-# drift.
+# match. Written to match the Gateway API's applied shape so ArgoCD doesn't drift.
 #
-# TWO-LAYER EXPOSURE MODEL:
-#   PUBLIC  — plain hero-rehab.xyz hostnames listed in the cloudflared tunnel
-#             ingress allowlist (whoami below).
-#   PRIVATE — *.int.hero-rehab.xyz hostnames: gated by Cloudflare Zero Trust
-#             Access at the edge before any request reaches the cluster
-#             (temporal web UI for operators). WORKLOADS do not use HTTP at all
-#             — they use temporal-frontend.default.svc:7233 (gRPC) in-cluster.
+# EXPOSURE MODEL — internal services stay INTERNAL:
+#   PUBLIC  — only the hostnames listed in the cloudflared tunnel ingress
+#             allowlist get a route here (whoami, the smoke test).
+#   INTERNAL — everything else is ClusterIP-only and reached in-cluster by
+#             service DNS (e.g. Temporal workloads → temporal-frontend:7233 gRPC)
+#             or by `kubectl port-forward` for operators.
+#   If a service ever needs browser access from outside, it gets a route ONLY
+#   together with an auth gate: oauth2-proxy (--provider=oidc, as in the home
+#   argo repo) in front of it, and the hostname added to the tunnel allowlist.
+#   No gate ⇒ no route.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -33,28 +35,4 @@ spec:
           kind: Service
           name: whoami
           port: 80
-          weight: 1
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: temporal-int
-  namespace: default
-spec:
-  parentRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: timestone-gateway
-  hostnames:
-    - "temporal.int.hero-rehab.xyz"
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
-        - group: ""
-          kind: Service
-          name: temporal-web
-          port: 8080
           weight: 1
