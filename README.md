@@ -45,10 +45,9 @@ clusters/           # per-leg values for the future OVH phase (see its README)
 - [x] cloudflared registered from both replicas (CDG edge)
 - [x] Both nodes survive remote `nixos-rebuild switch` from the public flake
 - [x] `timestone-auto-update` timer armed on both nodes (04:10 UTC)
-- [ ] `https://whoami.hero-rehab.xyz` → 200 + Hostname body (Universal SSL
-      issuance pending)
-- [ ] `https://temporal.hero-rehab.xyz` → 200
-- [ ] `https://doesnotexist.hero-rehab.xyz` → 404 (tunnel fallback)
+- [x] `https://whoami.hero-rehab.xyz` → 200 + Hostname body
+- [x] `https://temporal.hero-rehab.xyz` → 200
+- [x] `https://doesnotexist.hero-rehab.xyz` → 404 (tunnel fallback)
 - [x] Backups wave: intentionally omitted (no home-S3 rclone age file this phase)
 
 ## Conventions (from 59s / home argo)
