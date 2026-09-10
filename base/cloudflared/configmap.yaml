@@ -3,12 +3,16 @@
 # credentials Secret (`cloudflared-credentials`, ns default) is created by the
 # k8s-secrets-bootstrap oneshot from an age file — NOT defined in this repo.
 #
-# SECURITY: explicit hostname allowlist (no wildcard) — only hosts listed here
-# are forwarded to Traefik; everything else hits the 404 fallback at the tunnel
-# edge and never reaches the cluster. Adding a public service = add its hostname
-# here (and an HTTPRoute in base/gateway), both via GitOps.
-# Temporal is NOT listed: it is internal-only (workloads use
-# temporal-frontend.default.svc.cluster.local:7233).
+# TWO-LAYER EXPOSURE MODEL (explicit allowlist, never a bare public wildcard):
+#   PUBLIC  — whoami.hero-rehab.xyz → Traefik (no auth).
+#   PRIVATE — *.int.hero-rehab.xyz → Traefik, but ONLY after Cloudflare Zero
+#             Trust Access authentication. This requires the Access application
+#             (`Timestone internal`, tofu/cloudflare/main.tf) to exist FIRST —
+#             do not add the int hostname here until it does, or the private
+#             layer would be open to the internet.
+#   Everything else → 404 at the tunnel.
+# Adding a service = add its hostname here (+ an HTTPRoute), via GitOps.
+# NOTE: bump `timestone.io/config-revision` in deployment.yaml when this changes.
 apiVersion: v1
 kind: ConfigMap
 metadata:
