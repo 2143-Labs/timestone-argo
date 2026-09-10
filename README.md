@@ -65,6 +65,13 @@ clusters/           # per-leg values for the future OVH phase (see its README)
   Temporal (gRPC `temporal-frontend:7233`, no external route).
 - Cluster content targets ns `default`; helm charts create `argocd`/`cnpg-system`/
   `traefik`.
+- **Exposure + auth rule:** internal services stay internal (ClusterIP only,
+  reached by service DNS in-cluster or `kubectl port-forward`). A service gets a
+  route ONLY together with an auth gate — the home-argo pattern: **oauth2-proxy**
+  (`--provider=oidc`) in front of it, issuer = self-hosted **PocketID**, plus its
+  hostname added to the cloudflared tunnel allowlist. No gate ⇒ no route.
+  Steam/Discord logins are for *player-facing* product auth, never for
+  platform/admin surfaces.
 
 ## Applied versions (2026-09-09)
 
