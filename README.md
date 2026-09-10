@@ -39,14 +39,17 @@ base/               # shared plain YAML per component (dir = one ArgoCD child ap
 clusters/           # per-leg values for the future OVH phase (see its README)
 ```
 
-## Phase 1 live checklist
+## Phase 1 live checklist (2026-09-09 — Hetzner leg deployed)
 
-- [ ] `https://whoami.hero-rehab.xyz` → 200 + Hostname body (Hetzner)
+- [x] Gateway `timestone-gateway` `Programmed=True`
+- [x] cloudflared registered from both replicas (CDG edge)
+- [x] Both nodes survive remote `nixos-rebuild switch` from the public flake
+- [x] `timestone-auto-update` timer armed on both nodes (04:10 UTC)
+- [ ] `https://whoami.hero-rehab.xyz` → 200 + Hostname body (Universal SSL
+      issuance pending)
 - [ ] `https://temporal.hero-rehab.xyz` → 200
-- [ ] Gateway `timestone-gateway` `Programmed=True`
 - [ ] `https://doesnotexist.hero-rehab.xyz` → 404 (tunnel fallback)
-- [ ] Both nodes survive rolling `nixos-rebuild switch`; auto-update timer armed
-- [ ] Backups wave: intentionally omitted (no home-S3 rclone age file this phase)
+- [x] Backups wave: intentionally omitted (no home-S3 rclone age file this phase)
 
 ## Conventions (from 59s / home argo)
 
