@@ -1,4 +1,6 @@
 # HTTPRoutes behind the timestone-gateway (ns default, same-namespace attach).
+# Written in the FULL Gateway-API applied shape (group/kind/weight, default
+# PathPrefix match) so the API defaulting doesn't re-introduce drift.
 # BackendRefs verified against home-argo production:
 #   temporal-web:8080 — temporal chart web UI Service (fullnameOverride temporal)
 apiVersion: gateway.networking.k8s.io/v1
@@ -8,13 +10,23 @@ metadata:
   namespace: default
 spec:
   parentRefs:
-    - name: timestone-gateway
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: timestone-gateway
+      weight: 1
   hostnames:
     - "whoami.hero-rehab.xyz"
   rules:
-    - backendRefs:
-        - name: whoami
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: whoami
           port: 80
+          weight: 1
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -23,10 +35,20 @@ metadata:
   namespace: default
 spec:
   parentRefs:
-    - name: timestone-gateway
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: timestone-gateway
+      weight: 1
   hostnames:
     - "temporal.hero-rehab.xyz"
   rules:
-    - backendRefs:
-        - name: temporal-web
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: temporal-web
           port: 8080
+          weight: 1
