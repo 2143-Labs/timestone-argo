@@ -33,7 +33,8 @@ argocd/
 base/               # shared plain YAML per component (dir = one ArgoCD child app)
   cnpg/cluster.yaml             # CNPG Cluster `timestone` (single instance, db node)
   gateway/gateway.yaml          # Gateway `timestone-gateway` (http :80, ns default)
-  gateway/routes.yaml           # HTTPRoutes whoami + temporal → web UI :8080
+  gateway/routes.yaml           # HTTPRoute whoami ONLY — public hosts are an
+                                #   explicit allowlist (Temporal is internal-only)
   apps/whoami/{deployment,service}.yaml
   cloudflared/{configmap,deployment}.yaml
 clusters/           # per-leg values for the future OVH phase (see its README)
@@ -46,7 +47,8 @@ clusters/           # per-leg values for the future OVH phase (see its README)
 - [x] Both nodes survive remote `nixos-rebuild switch` from the public flake
 - [x] `timestone-auto-update` timer armed on both nodes (04:10 UTC)
 - [x] `https://whoami.hero-rehab.xyz` → 200 + Hostname body
-- [x] `https://temporal.hero-rehab.xyz` → 200
+- [x] `https://temporal.hero-rehab.xyz` → 404 externally (INTERNAL service;
+      workloads use `temporal-frontend.default.svc.cluster.local:7233`)
 - [x] `https://doesnotexist.hero-rehab.xyz` → 404 (tunnel fallback)
 - [x] Backups wave: intentionally omitted (no home-S3 rclone age file this phase)
 
@@ -58,7 +60,9 @@ clusters/           # per-leg values for the future OVH phase (see its README)
   (never `:latest`); upgrades are separate follow-up commits.
 - Wave order is annotation-driven (`argocd.argoproj.io/sync-wave`); file location
   under `wave-N/` is cosmetic (`root-app` recurses).
-- Domain: `*.hero-rehab.xyz` (CF-terminated TLS — no cert-manager in-cluster).
+- Domain: only explicitly-listed hostnames are exposed (tunnel ingress allowlist
+  + one HTTPRoute each). Public: `whoami.hero-rehab.xyz`. Internal-only:
+  Temporal (gRPC `temporal-frontend:7233`, no external route).
 - Cluster content targets ns `default`; helm charts create `argocd`/`cnpg-system`/
   `traefik`.
 

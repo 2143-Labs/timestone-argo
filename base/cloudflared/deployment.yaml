@@ -17,6 +17,10 @@ spec:
     metadata:
       labels:
         app: cloudflared
+      annotations:
+        # Bump when cloudflared-config changes: ConfigMap edits alone do not
+        # restart the pods, and the tunnel config is read at startup only.
+        timestone.io/config-revision: "2"
     spec:
       containers:
         - name: cloudflared
