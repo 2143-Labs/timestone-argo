@@ -22,3 +22,12 @@ spec:
       selfHeal: true
     syncOptions:
       - ServerSideApply=true
+  ignoreDifferences:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      jqPathExpressions:
+        - .status
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      jqPathExpressions:
+        - .status
