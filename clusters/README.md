@@ -7,7 +7,7 @@ One directory per environment. The env determines *where* the manifests land and
 | Env | Tree | Cluster | Domain | Notes |
 |---|---|---|---|---|
 | `prod/` | `../argocd/` (root app, recurse) | Hetzner `ts-hz-*` | `hero-rehab.xyz` → `hero.rehab` after demo | real data — HA + backups required |
-| `nonprod/` | `../nonprod/` (root app, recurse) | home cluster | a home domain (TBD) | synthetic data only (home is US-resident) |
+| `nonprod/` | `../nonprod/` (root app, recurse) | home cluster | a home domain (TBD) | synthetic data only (home is US-resident). **Deferred — not applied.** |
 
 ## Values that differ per environment
 

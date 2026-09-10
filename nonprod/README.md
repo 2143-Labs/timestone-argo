@@ -1,4 +1,8 @@
-# nonprod/ — the NONPROD environment (home cluster)
+# nonprod/ — the NONPROD environment (home cluster) — **DEFERRED**
+
+> Not part of the current baseline. The baseline is the single prod environment
+> (Hetzner + Cloudflare, `hero-rehab.xyz`). This tree is scaffolded so the split
+> is ready when wanted; nothing here is applied.
 
 This tree is the *home-cluster* environment. It is deliberately OUTSIDE
 `argocd/`: the prod root Application syncs `path: argocd` with `recurse: true`,

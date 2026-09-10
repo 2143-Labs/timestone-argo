@@ -1,4 +1,4 @@
-# clusters/nonprod — NONPROD environment values
+# clusters/nonprod — NONPROD environment values (**deferred**, not applied)
 
 - **Cluster:** home cluster (existing hardware/k8s; **no Cloudflare in the path**)
 - **Domain:** a home domain or tailnet name (TBD) — nonprod never uses

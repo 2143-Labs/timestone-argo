@@ -10,13 +10,13 @@ Canonical architecture & cost: [`../timestone.md`](../timestone.md).
 
 | Env | Cluster | Domain | Tree | Data | Notes |
 |---|---|---|---|---|---|
-| **prod** | Hetzner `ts-hz-ctl`/`ts-hz-db` (EU compute; Cloudflare = edge only) | `hero-rehab.xyz` now → `hero.rehab` after the demo | `argocd/` (+ `base/`) | real | HA + backups required |
-| **nonprod** | home cluster (no Cloudflare in the path) | a home domain / tailnet (TBD) | `nonprod/` | synthetic only | home is US-resident — never real client data |
+| **prod — THE BASELINE** | Hetzner `ts-hz-ctl`/`ts-hz-db` (EU compute; Cloudflare = edge only) | `hero-rehab.xyz` (→ `hero.rehab` after the demo) | `argocd/` (+ `base/`) | real | this is the entire deployment baseline; HA + backups required |
+| _nonprod (deferred)_ | home cluster (no Cloudflare in the path) | TBD | `nonprod/` | synthetic only | scaffolded, NOT applied; home is US-resident so never real client data |
 
-The two trees are siblings on purpose: the prod root Application syncs
-`path: argocd` with `recurse: true`, so anything under `argocd/` lands in prod.
-Nonprod lives in `nonprod/` with its own root Application, applied once to the
-home cluster's ArgoCD — same repo, zero cross-talk.
+Everything in this repo serves the single prod baseline today. The `nonprod/`
+tree exists only so the split is ready when wanted; it is deliberately a sibling
+of `argocd/` because the prod root Application syncs `path: argocd` with
+`recurse: true` — that way the two can never sync each other's manifests.
 
 ## Layout
 
