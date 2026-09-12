@@ -1,6 +1,7 @@
-# Named-tunnel connector pods. Credentials come from the `cloudflared-credentials`
-# Secret in ns default, created by the k8s-secrets-bootstrap oneshot (age file)
-# — NOT defined in this repo. Mounted as /etc/cloudflared/creds.json.
+# Named-tunnel connector pods. Token comes from the `cloudflared-tunnel-token`
+# Secret in ns default (key `token`), fetched from the Cloudflare API and
+# created imperatively at bootstrap — NOT defined in this repo. Token mode
+# replaces the legacy credentials-file style used on the old k3s cluster.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,12 +21,18 @@ spec:
       annotations:
         # Bump when cloudflared-config changes: ConfigMap edits alone do not
         # restart the pods, and the tunnel config is read at startup only.
-        timestone.io/config-revision: "2"
+        timestone.io/config-revision: "3"
     spec:
       containers:
         - name: cloudflared
           image: cloudflare/cloudflared:2026.8.3 # pinned — never :latest
           imagePullPolicy: IfNotPresent
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-tunnel-token
+                  key: token
           args:
             - tunnel
             - --config
@@ -45,12 +52,5 @@ spec:
               readOnly: true
       volumes:
         - name: config
-          projected:
-            sources:
-              - configMap:
-                  name: cloudflared-config
-              - secret:
-                  name: cloudflared-credentials
-                  items:
-                    - key: credentials.json
-                      path: creds.json
+          configMap:
+            name: cloudflared-config

@@ -19,7 +19,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/2143-Labs/timestone-argo # placeholder — set on first push
-    targetRevision: HEAD
+    targetRevision: talos-cutover # child apps on this branch point here too
     path: argocd
     directory:
       recurse: true

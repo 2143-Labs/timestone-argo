@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hcloud-csi
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: hcloud-csi
+    repoURL: https://charts.hetzner.cloud
+    # Pinned in talos/versions.json (charts.hcloud-csi). Provides the
+    # `hcloud-volumes` StorageClass (default, reclaimPolicy Delete) used by the
+    # CNPG cluster. Reads the `hcloud` Secret (key `token`) in kube-system by
+    # default (created imperatively at bootstrap, never in git).
+    targetRevision: 2.23.0
+    helm:
+      releaseName: hcloud-csi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

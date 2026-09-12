@@ -1,8 +1,9 @@
-# Timestone CNPG Cluster — single instance pinned to the db node (CX33) via the
-# k3s agent node-label timestone.io/workload=primary (set at join time).
+# Timestone CNPG Cluster — single instance on the Talos backend, using
+# hcloud-csi block storage (StorageClass hcloud-volumes). No node pin: Talos
+# nodes carry no workload label (the k3s agent label only exists on legacy).
 #
 # Adapted from argo/workloads/temporal-db/cnpg-cluster.yaml:
-#   - name timestone; storage local-path (8Gi + 4Gi wal) — no Longhorn Phase 1
+#   - name timestone; storage hcloud-volumes (8Gi + 4Gi wal)
 #   - postgres 16-series image current at execution (16.15 as of 2026-09-09);
 #     major stays 16 to match the Temporal chart's expectations
 #   - NO backup section this phase (CronJob wave is gated on home-S3 creds)
@@ -13,10 +14,6 @@ metadata:
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16.15
-  affinity:
-    # Pin the single instance to the db node (k3s agent label set at join).
-    nodeSelector:
-      timestone.io/workload: primary
   resources:
     requests:
       cpu: 500m
@@ -26,10 +23,10 @@ spec:
       memory: 512Mi
   storage:
     size: 8Gi
-    storageClass: local-path
+    storageClass: hcloud-volumes
   walStorage:
     size: 4Gi
-    storageClass: local-path
+    storageClass: hcloud-volumes
   bootstrap:
     initdb:
       database: temporal

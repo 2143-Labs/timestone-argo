@@ -1,0 +1,33 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hcloud-ccm
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: hcloud-cloud-controller-manager
+    repoURL: https://charts.hetzner.cloud
+    # Pinned in talos/versions.json (charts.hcloud-cloud-controller-manager).
+    # Reads the `hcloud` Secret (key `token`) in kube-system by default; that
+    # secret is created imperatively at cluster bootstrap (never in git).
+    targetRevision: 1.36.0
+    helm:
+      releaseName: hcloud-ccm
+      values: |
+        env:
+          HCLOUD_METRICS_ENABLED: "false"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

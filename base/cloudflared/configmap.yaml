@@ -1,9 +1,7 @@
 # Tunnel routing config. `tunnel` id comes from
-# `tofu -chdir=cloudflare output tunnel_id` (API-created named tunnel). The
-# credentials Secret (`cloudflared-credentials`, ns default) is created by the
-# k8s-secrets-bootstrap oneshot from an age file — NOT defined in this repo.
-#
-# TWO-LAYER EXPOSURE MODEL (explicit allowlist, never a bare public wildcard):
+# `tofu -chdir=cloudflare output tunnel_id` (API-created named tunnel). Auth
+# uses TUNNEL_TOKEN (Secret `cloudflared-tunnel-token`, ns default) — no
+# credentials file in token mode.
 #   PUBLIC  — whoami.hero-rehab.xyz → Traefik (no auth).
 #   PRIVATE — *.int.hero-rehab.xyz → Traefik, but ONLY after Cloudflare Zero
 #             Trust Access authentication. This requires the Access application
@@ -21,7 +19,6 @@ metadata:
 data:
   config.yml: |
     tunnel: 1e6bb9a4-8a99-4eaa-a029-105155bdeccd
-    credentials-file: /etc/cloudflared/creds.json
     ingress:
       - hostname: whoami.hero-rehab.xyz
         service: http://traefik.traefik.svc:80
