@@ -36,7 +36,8 @@ spec:
         # No hostNetwork/LoadBalancer — cloudflared (same cluster) reaches the
         # traefik Service via ClusterIP.
         service:
-          type: ClusterIP
+          spec:
+            type: ClusterIP
         ports:
           web:
             port: 80
