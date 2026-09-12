@@ -9,15 +9,15 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
+  # Static manifests in base/hcloud-ccm (not the helm chart): ArgoCD's bundled
+  # helm v4.2.1 fails to render the chart's deployment.yaml (YAML parse error at
+  # line 63, triggered by ArgoCD's --api-versions list). Image pinned to the
+  # chart 1.36.0 app version; reads the `hcloud` Secret (key token) created
+  # imperatively at bootstrap.
   source:
-    chart: hcloud-cloud-controller-manager
-    repoURL: https://charts.hetzner.cloud
-    # Pinned in talos/versions.json (charts.hcloud-cloud-controller-manager).
-    # Reads the `hcloud` Secret (key `token`) in kube-system by default; that
-    # secret is created imperatively at cluster bootstrap (never in git).
-    targetRevision: 1.36.0
-    helm:
-      releaseName: hcloud-ccm
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: talos-cutover
+    path: base/hcloud-ccm
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-system
