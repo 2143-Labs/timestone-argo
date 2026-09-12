@@ -22,4 +22,12 @@ data:
     ingress:
       - hostname: whoami.hero-rehab.xyz
         service: http://traefik.traefik.svc:80
+      # SPIFFE OIDC discovery + JWKS for the timestone SPIRE server. This route
+      # is deliberately UNGATED — the discovery document and JWKS are public
+      # key material, and the consumer is the home OpenBao fetching them
+      # machine-to-machine with no browser session to present. Do not add an
+      # oauth2-proxy gate here; it would break OpenBao's JWT auth. The SPIRE
+      # bundle endpoint is NOT exposed here (see argocd/wave-3/spire.yaml).
+      - hostname: spiffe.hero-rehab.xyz
+        service: http://traefik.traefik.svc:80
       - service: http_status:404

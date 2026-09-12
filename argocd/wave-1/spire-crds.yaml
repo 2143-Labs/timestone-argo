@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: spire-crds
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: spire-crds
+    repoURL: https://spiffe.github.io/helm-charts-hardened
+    # Ships separately from the spire chart upstream (which does not vendor
+    # these), so it is its own Application and lands first, hence wave 1.
+    targetRevision: 0.6.1
+    helm:
+      releaseName: spire-crds
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

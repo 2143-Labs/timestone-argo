@@ -40,6 +40,11 @@ spec:
         login: true
         passwordSecret:
           name: temporal-db-password
+      - name: spire
+        ensure: present
+        login: true
+        passwordSecret:
+          name: spire-db-password
   postgresql:
     pg_hba:
       - host all all 0.0.0.0/0 scram-sha-256

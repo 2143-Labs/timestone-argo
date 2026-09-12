@@ -1,0 +1,19 @@
+# SPIRE datastore for the timestone SPIRE server (trust domain trust.hero.rehab).
+#
+# Declared as a CNPG `Database` object rather than a postInitSQL entry: postInitSQL
+# runs once immediately after cluster creation as the postgres superuser, i.e.
+# before spec.managed.roles is reconciled, so `CREATE DATABASE spire OWNER spire`
+# there races a role that does not exist yet. The `Database` object is reconciled
+# after the role, which makes the ordering explicit.
+#
+# No metadata.namespace: the Application destination (default) supplies it, and the
+# CI validator rejects any base/ manifest declaring a namespace other than default.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: spire
+spec:
+  name: spire
+  owner: spire
+  cluster:
+    name: timestone

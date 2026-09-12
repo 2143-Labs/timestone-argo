@@ -1,0 +1,81 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: spire
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: spire
+    repoURL: https://spiffe.github.io/helm-charts-hardened
+    # appVersion 1.15.3. Wave 3 so the CNPG Cluster (wave 2) exists first; this
+    # is the datastore, and the server crash-loops without it.
+    targetRevision: 0.30.2
+    helm:
+      releaseName: spire
+      values: |
+        global:
+          spire:
+            trustDomain: trust.hero.rehab
+            clusterName: timestone
+            # Pins the issuer for both the JWT-SVID `iss` claim and the OIDC
+            # discovery document. Unset, the chart derives
+            # https://oidc-discovery.<trustDomain>, which is NOT the endpoint
+            # OpenBao is configured against.
+            jwtIssuer: https://spiffe.hero-rehab.xyz
+        spire-server:
+          # The chart default (1) says multiple instances "will not work until
+          # we use an external database" — valid only because of the Postgres
+          # datastore below. The CNPG cluster itself is still instances: 1, so
+          # this is rolling-restart availability, not datastore HA.
+          replicaCount: 2
+          dataStore:
+            sql:
+              databaseType: postgres
+              databaseName: spire
+              host: timestone-rw
+              port: 5432
+              username: spire
+              externalSecret:
+                enabled: true
+                name: spire-db-password
+                key: password
+          controllerManager:
+            enabled: true
+          federation:
+            # NOTE: rendered server.conf selects the https_spiffe bundle
+            # profile, not https_web. The public-route mechanism documented in
+            # the plan (Cloudflare origin + noTLSVerify, which assumes the
+            # publicly-trusted-cert validation of https_web) therefore does not
+            # apply as written and must be revisited before federation is
+            # exposed. Nothing consumes this yet — the endpoint is only on the
+            # in-cluster Service spire-server:8443.
+            enabled: true
+            bundleEndpoint:
+              port: 8443
+              address: 0.0.0.0
+        spire-agent:
+          enabled: true
+        spiffe-csi-driver:
+          enabled: true
+        spiffe-oidc-discovery-provider:
+          enabled: true
+          # Plain HTTP so the Cloudflare tunnel terminates TLS with a publicly
+          # trusted certificate. All three tls.* switches are OR-ed, so this
+          # only holds while tls.externalSecret and tls.certManager stay at
+          # their false defaults. Plain mode listens on 8080 and the Service
+          # exposes port 80 (name http).
+          tls:
+            spire:
+              enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

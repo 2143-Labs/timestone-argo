@@ -1,0 +1,34 @@
+# Workload identities for the timestone cluster (trust domain trust.hero.rehab).
+#
+# Why this file exists: the spire chart ships its own ClusterSPIFFEIDs, but its
+# fallback entry (`default-spire-default`) deliberately EXCLUDES the `default`
+# namespace via namespaceSelector matchExpressions, and the two non-fallback
+# entries select only the chart's own components. Nothing therefore registers an
+# identity for an ordinary workload in `default`, which is where every timestone
+# workload lives. This entry fills exactly that gap.
+#
+# className is REQUIRED here, not decorative. The chart configures the
+# controller manager with className "default-spire" and watchClassless false,
+# and spire-controller-manager keeps an object only when
+#   (spec.className == "" && watchClassless) || spec.className == config.className
+# so an object with no className is excluded and silently registers nothing.
+# "default-spire" is derived by the chart as "<namespace>-<release>"; if the
+# release name or namespace in argocd/wave-3/spire.yaml ever changes, this must
+# change with it.
+#
+# ClusterSPIFFEID is spire.spiffe.io/v1alpha1 and cluster-scoped, so it carries
+# no namespace (the CI validator rejects a non-default declared namespace under
+# base/ anyway).
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: timestone-openbao
+spec:
+  className: "default-spire"
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      spire.io/openbao-identity: "true"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: default
