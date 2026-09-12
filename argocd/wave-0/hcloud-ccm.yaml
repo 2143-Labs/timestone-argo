@@ -16,7 +16,7 @@ spec:
   # imperatively at bootstrap.
   source:
     repoURL: https://github.com/2143-Labs/timestone-argo.git
-    targetRevision: talos-cutover
+    targetRevision: HEAD
     path: base/hcloud-ccm
   destination:
     server: https://kubernetes.default.svc

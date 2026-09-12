@@ -11,7 +11,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/2143-Labs/timestone-argo.git
-    targetRevision: talos-cutover
+    targetRevision: HEAD
     path: base/apps/whoami
   destination:
     server: https://kubernetes.default.svc
