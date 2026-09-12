@@ -1,0 +1,152 @@
+# Two containers in one pod:
+#   spiffe-helper — maintains a JWT-SVID on a shared emptyDir
+#   sync          — decodes that SVID, exchanges it at OpenBao for a token,
+#                   reads one KV path, and writes the result to a Secret
+#
+# Both halves were needed because nothing off the shelf can do this: External
+# Secrets Operator v2.10.0 has no SPIFFE auth method (its Vault provider's
+# `auth.jwt` reads a JWT from a Kubernetes Secret or a TokenRequest, never from
+# the Workload API), and the Vault/OpenBao CSI provider's only auth
+# implementation posts a service-account token to the Kubernetes login path.
+# So the SPIFFE consumer is a sidecar, which also keeps the blast radius at one
+# pod instead of a cluster-wide operator.
+#
+# Placement note: this pod stays in `default` (PodSecurity baseline) because the
+# ClusterSPIFFEID selects namespace `default` and this pod must match it. It
+# needs no host namespaces, no hostPath and no hostPort, so baseline is enough —
+# unlike the SPIRE agent and CSI driver, which the chart places in `spire-system`
+# precisely because they do.
+#
+# UID: one UID for the whole pod so the sync container can read the 0640 SVID
+# that the helper writes. The helper image is distroless and carries no USER, so
+# without an explicit runAsUser it would run as root and the shared file would be
+# unreadable at 0640 by a non-root consumer.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openbao-secret-sync
+  labels:
+    app: openbao-secret-sync
+spec:
+  revisionHistoryLimit: 3
+  # Exactly one: this is the sole writer of the Secret, and two replicas would
+  # race the same PUT. No leader election is needed for one writer.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openbao-secret-sync
+  template:
+    metadata:
+      labels:
+        app: openbao-secret-sync
+        # The ClusterSPIFFEID's podSelector. Without this label the pod gets no
+        # registration entry and every login attempt fails at the Workload API.
+        spire.io/openbao-identity: "true"
+    spec:
+      serviceAccountName: openbao-secret-sync
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: spiffe-helper
+          image: ghcr.io/spiffe/spiffe-helper:0.11.0
+          imagePullPolicy: IfNotPresent
+          # Distroless static: ENTRYPOINT is /spiffe-helper and there is no
+          # shell, so the config path is passed as an argument.
+          args: ["-config", "/etc/spiffe-helper/helper.conf"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: health
+              containerPort: 8081
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          # httpGet, not exec: the image has no shell to run a probe in.
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 20
+            failureThreshold: 3
+          # Readiness is meaningful here: the helper reports it false until an
+          # SVID has been successfully written to disk.
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+            - name: spiffe
+              mountPath: /spiffe
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /etc/spiffe-helper/helper.conf
+              subPath: helper.conf
+              readOnly: true
+
+        - name: sync
+          image: curlimages/curl:8.22.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "/scripts/sync.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+          volumeMounts:
+            # Read-only: this container never needs to modify the SVID.
+            - name: spiffe
+              mountPath: /spiffe
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /scripts/sync.sh
+              subPath: sync.sh
+              readOnly: true
+
+      volumes:
+        # The SPIFFE CSI driver performs no provisioning or attachment; it
+        # exposes the node's SPIFFE agent socket as an inline ephemeral volume.
+        # The socket appears as /spiffe-workload-api/spire-agent.sock, which is
+        # the agent_address in helper.conf.
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+        - name: spiffe
+          emptyDir: {}
+        # Needed only because readOnlyRootFilesystem is on; busybox and curl
+        # both expect a writable /tmp.
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: openbao-secret-sync
+            defaultMode: 0444

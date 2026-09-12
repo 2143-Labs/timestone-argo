@@ -1,0 +1,134 @@
+# spiffe-helper HCL config and the sync script, both mounted as files.
+#
+# HCL notes (these are exactly the keys spiffe-helper v0.11.0 parses, and every
+# one of them is load-bearing):
+#
+#   agent_address  — the socket the SPIFFE CSI driver mounts into this pod. The
+#                    helper's own default (/tmp/spire-agent/public/api.sock) is
+#                    the *host* path used by a hostNetwork agent, and is not
+#                    present here.
+#   cert_dir       — REQUIRED. The written path is path.Join(CertDir,
+#                    jwt_svid_file_name), and path.Join does not treat a leading
+#                    "/" in the second argument as a reset — an absolute
+#                    jwt_svid_file_name would land under CertDir, not at it. So
+#                    cert_dir owns the directory and the filename stays relative.
+#   jwt_svids      — jwt_audience and jwt_svid_file_name are both mandatory
+#                    (ValidateConfig). The audience must equal the OpenBao
+#                    role's bound_audiences exactly.
+#   health_checks  — fields are listener_enabled / bind_port / liveness_path /
+#                    readiness_path, and there is no bind_address: the helper
+#                    always listens on all interfaces. Readiness reports false
+#                    until an SVID has actually been written, which is precisely
+#                    the signal worth probing.
+#
+# The written file is Base64-encoded, not raw JWT — the sync script decodes it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-secret-sync
+  namespace: default
+data:
+  helper.conf: |
+    agent_address      = "/spiffe-workload-api/spire-agent.sock"
+    cert_dir           = "/spiffe"
+    daemon_mode        = true
+    jwt_svid_file_mode = 0640
+    jwt_svids = [
+      {
+        jwt_audience       = "openbao.john2143.com"
+        jwt_svid_file_name = "svid.jwt"
+      }
+    ]
+    health_checks {
+      listener_enabled = true
+      bind_port        = 8081
+      liveness_path    = "/live"
+      readiness_path   = "/ready"
+    }
+
+  sync.sh: |
+    #!/bin/sh
+    # One hop: SPIFFE identity -> OpenBao login -> KV read -> Kubernetes Secret.
+    # Deliberately has no `bao` and no `kubectl`: both sides are plain HTTPS and
+    # the base images carry neither binary.
+    set -u
+
+    BAO_ADDR="https://openbao.john2143.com"
+    SA_DIR=/var/run/secrets/kubernetes.io/serviceaccount
+    K8S="https://kubernetes.default.svc"
+    SECRET_NAME=openbao-steam
+    SECRET_NS=default
+    SVID_FILE=/spiffe/svid.jwt
+    INTERVAL_SECONDS=300
+
+    log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+
+    sync_once() {
+      if [ ! -s "$SVID_FILE" ]; then
+        log "no JWT-SVID at $SVID_FILE yet"
+        return 1
+      fi
+
+      # spiffe-helper writes the JWT-SVID Base64-encoded.
+      SVID=$(base64 -d "$SVID_FILE" 2>/dev/null | tr -d '\r\n')
+      if [ -z "$SVID" ]; then
+        log "could not decode $SVID_FILE"
+        return 1
+      fi
+
+      LOGIN=$(curl -sf -X POST "$BAO_ADDR/v1/auth/jwt-timestone/login" \
+        -H 'Content-Type: application/json' \
+        --data "{\"role\":\"hello\",\"jwt\":\"$SVID\"}") || {
+        log "OpenBao login request failed"
+        return 1
+      }
+
+      TOKEN=$(printf '%s' "$LOGIN" | sed -n 's/.*"client_token":"\([^"]*\)".*/\1/p')
+      if [ -z "$TOKEN" ]; then
+        log "OpenBao login returned no client_token"
+        return 1
+      fi
+
+      KV=$(curl -sf -H "X-Vault-Token: $TOKEN" \
+        "$BAO_ADDR/v1/consumers/data/hero-rehab/steam") || {
+        log "OpenBao KV read failed"
+        return 1
+      }
+
+      # Field-name agnostic on purpose: take the single value inside data.data
+      # rather than assuming the key is literally "steam". KV v2 serialises
+      # "data" before "metadata", so this match is deterministic.
+      PAYLOAD=$(printf '%s' "$KV" | sed -n 's/.*"data":{"data":{\(.*\)},"metadata":.*/\1/p')
+      VALUE=$(printf '%s' "$PAYLOAD" | sed -n 's/^"[^"]*":"\(.*\)"$/\1/p')
+      if [ -z "$VALUE" ]; then
+        log "could not extract a value from the KV response"
+        return 1
+      fi
+
+      B64=$(printf '%s' "$VALUE" | base64 | tr -d '\r\n')
+      BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\",\"labels\":{\"app.kubernetes.io/managed-by\":\"openbao-secret-sync\"}},\"type\":\"Opaque\",\"data\":{\"steam\":\"$B64\"}}"
+
+      CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PUT \
+        --cacert "$SA_DIR/ca.crt" \
+        -H "Authorization: Bearer $(cat "$SA_DIR/token")" \
+        -H 'Content-Type: application/json' \
+        --data "$BODY" \
+        "$K8S/api/v1/namespaces/$SECRET_NS/secrets/$SECRET_NAME")
+
+      case "$CODE" in
+        200|201)
+          log "synced $SECRET_NS/$SECRET_NAME (http $CODE)"
+          return 0
+          ;;
+        *)
+          log "secret write failed (http $CODE)"
+          return 1
+          ;;
+      esac
+    }
+
+    log "starting: every ${INTERVAL_SECONDS}s as spiffe://trust.hero-rehab.xyz/ns/default/sa/openbao-secret-sync"
+    while true; do
+      sync_once || true
+      sleep "$INTERVAL_SECONDS"
+    done

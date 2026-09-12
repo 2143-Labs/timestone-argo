@@ -1,0 +1,73 @@
+# The consumer. Proves the full two-hop path end to end: a timestone workload
+# reads an OpenBao value it was never given a credential for, because the value
+# arrives as an ordinary Kubernetes Secret written by openbao-secret-sync.
+#
+# Deliberately holds NO SPIFFE identity: the Secret is the interface, so the
+# application needs no Workload API mount, no SPIFFE library and no code change.
+# If it ever needs its own identity, that is a policy decision (a per-workload
+# SPIFFE ID and a matching OpenBao role), not a configuration tweak.
+#
+# Image and shape mirror base/apps/whoami so the smoke-test surface stays
+# uniform. No HTTPRoute: this is not exposed through the tunnel.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-openbao
+  labels:
+    app: hello-openbao
+spec:
+  revisionHistoryLimit: 3
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hello-openbao
+  template:
+    metadata:
+      labels:
+        app: hello-openbao
+    spec:
+      # NOTE: traefik/whoami runs as root — no runAsNonRoot on pod or container.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: hello-openbao
+          image: traefik/whoami:v1.10.4
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # The Secret's key is `steam` because this manifest says so — the
+            # sync writes what the consumer names, not what OpenBao calls it.
+            - name: STEAM_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openbao-steam
+                  key: steam
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 5
+            failureThreshold: 3

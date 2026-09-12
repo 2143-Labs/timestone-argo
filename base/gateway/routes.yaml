@@ -36,32 +36,3 @@ spec:
           name: whoami
           port: 80
           weight: 1
-
-# Deliberate exception to the "no gate ⇒ no route" rule stated above: the SPIFFE
-# OIDC discovery document and JWKS are public key material, and the consumer is
-# the home OpenBao fetching them machine-to-machine — it cannot present an
-# oauth2-proxy session. Nothing here is user data and nothing is writable.
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: spiffe-oidc
-  namespace: default
-spec:
-  parentRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: timestone-gateway
-  hostnames:
-    - "spiffe.hero-rehab.xyz"
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
-        - group: ""
-          kind: Service
-          name: spire-spiffe-oidc-discovery-provider
-          port: 80
-          weight: 1

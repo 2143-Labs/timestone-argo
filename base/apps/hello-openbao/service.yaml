@@ -1,0 +1,18 @@
+# ClusterIP only. Present so the smoke test is reachable in-cluster (and via
+# `kubectl port-forward`) without going through the tunnel: it carries no
+# HTTPRoute, because base/gateway/routes.yaml's rule is no gate ⇒ no route.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-openbao
+  labels:
+    app: hello-openbao
+spec:
+  type: ClusterIP
+  selector:
+    app: hello-openbao
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http

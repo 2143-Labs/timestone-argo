@@ -1,4 +1,4 @@
-# Workload identities for the timestone cluster (trust domain trust.hero.rehab).
+# Workload identities for the timestone cluster (trust domain trust.hero-rehab.xyz).
 #
 # Why this file exists: the spire chart ships its own ClusterSPIFFEIDs, but its
 # fallback entry (`default-spire-default`) deliberately EXCLUDES the `default`
@@ -12,9 +12,12 @@
 # and spire-controller-manager keeps an object only when
 #   (spec.className == "" && watchClassless) || spec.className == config.className
 # so an object with no className is excluded and silently registers nothing.
-# "default-spire" is derived by the chart as "<namespace>-<release>"; if the
-# release name or namespace in argocd/wave-3/spire.yaml ever changes, this must
-# change with it.
+# "default-spire" is derived by the chart as "<release namespace>-<release>".
+# Only the *release* namespace feeds that string — global.spire.namespaces
+# relocates the component pods (spire-system / spire-server) and does not change
+# it. So this stays "default-spire" as long as the Application destination and
+# releaseName in argocd/wave-3/spire.yaml are unchanged; change it there and this
+# must change with it.
 #
 # ClusterSPIFFEID is spire.spiffe.io/v1alpha1 and cluster-scoped, so it carries
 # no namespace (the CI validator rejects a non-default declared namespace under

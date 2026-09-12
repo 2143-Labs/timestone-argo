@@ -1,0 +1,39 @@
+# Writes exactly one Secret, in one namespace, and nothing else.
+#
+# Two rules rather than one because RBAC cannot restrict `create` by
+# resourceName (the name is not reliably known when the request is authorized),
+# so `create` stays namespace-scoped. `get` and `update` are pinned to the one
+# Secret name. Note this grants the ServiceAccount the ability to write any
+# Secret in `default`; that is the price of having the value created
+# declaratively instead of pre-seeded out of band, and it is confined to
+# `default` rather than cluster-wide.
+#
+# No `delete`: the sync never removes the Secret, so a transient OpenBao outage
+# leaves the last good value in place rather than blanking it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openbao-secret-sync
+  namespace: default
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["openbao-steam"]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openbao-secret-sync
+  namespace: default
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: openbao-secret-sync
+subjects:
+  - kind: ServiceAccount
+    name: openbao-secret-sync
+    namespace: default

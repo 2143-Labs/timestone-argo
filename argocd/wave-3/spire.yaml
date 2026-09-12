@@ -12,8 +12,8 @@ spec:
   source:
     chart: spire
     repoURL: https://spiffe.github.io/helm-charts-hardened
-    # appVersion 1.15.3. Wave 3 so the CNPG Cluster (wave 2) exists first; this
-    # is the datastore, and the server crash-loops without it.
+    # appVersion 1.15.3. Wave 3 is retained for ordering only; nothing here
+    # depends on the CNPG Cluster (wave 2) — the datastore is SQLite on a PVC.
     targetRevision: 0.30.2
     helm:
       releaseName: spire
@@ -34,7 +34,39 @@ spec:
           deleteHooks:
             enabled: false
           spire:
-            trustDomain: trust.hero.rehab
+            # Component placement. The release itself stays in `default`, which
+            # is what keeps the controller-manager className "default-spire" —
+            # base/spire/identities.yaml depends on that exact string. These
+            # flags move the *pods*, not the release.
+            #
+            # Why this is required rather than cosmetic: Talos configures
+            # KubeAdmissionControlConfig with enforce=baseline as the cluster
+            # default, and namespace `default` inherits it. The agent needs
+            # hostNetwork/hostPID/hostPort 9982 and the CSI driver is
+            # privileged, so both are rejected there with FailedCreate. The
+            # chart renders a Namespace per component with matching PodSecurity
+            # labels (spire-system: privileged, spire-server: restricted), so
+            # namespacePSS is what makes the admission check pass.
+            #
+            # recommendations.enabled also turns on strictMode, which fails the
+            # render unless trustDomain, clusterName, jwtIssuer and caSubject
+            # are all non-default. That is deliberate: it is what stops a
+            # placeholder identity from being deployed silently.
+            recommendations:
+              enabled: true
+              namespaceLayout: true
+              namespacePSS: true
+            namespaces:
+              create: true
+              system:
+                name: spire-system
+              server:
+                name: spire-server
+            # The timestone trust domain. NOT the hero-rehab production
+            # cluster's `trust.hero.rehab`, which this value previously and
+            # wrongly named, and NOT the DigitalOcean cluster's
+            # `trust-do.2143.me`. Neither is ever a federation peer here.
+            trustDomain: trust.hero-rehab.xyz
             clusterName: timestone
             # Pins the issuer for both the JWT-SVID `iss` claim and the OIDC
             # discovery document. Unset, the chart derives
@@ -42,32 +74,36 @@ spec:
             # OpenBao is configured against.
             jwtIssuer: https://spiffe.hero-rehab.xyz
         spire-server:
-          # The chart default (1) says multiple instances "will not work until
-          # we use an external database" — valid only because of the Postgres
-          # datastore below. The CNPG cluster itself is still instances: 1, so
-          # this is rolling-restart availability, not datastore HA.
-          replicaCount: 2
-          dataStore:
-            sql:
-              databaseType: postgres
-              databaseName: spire
-              host: timestone-rw
-              port: 5432
-              username: spire
-              externalSecret:
-                enabled: true
-                name: spire-db-password
-                key: password
+          # The chart default (1) documents that multiple replicas "will not
+          # work until we use an external database". The datastore below is
+          # SQLite on a PVC, so one replica is the correct count, not a
+          # compromise. Revisit only when entry or agent count makes SQLite the
+          # constraint — that needs an external database AND a way to
+          # distribute its credential into both namespaces, which this repo
+          # does not have declaratively today.
+          replicaCount: 1
+          # No dataStore block: the chart default is SQLite at
+          # /run/spire/data/datastore.sqlite3 with persistence.type pvc.
+          # Chosen over the previous Postgres/CNPG datastore because with
+          # components split across namespaces a Postgres password Secret is
+          # needed in both CNPG's namespace and spire-server, and nothing here
+          # can create secrets declaratively.
+          #
+          # Required by strict mode. This is the X.509 CA subject for the whole
+          # trust domain: changing it re-roots every SVID issued here, so it is
+          # fixed deliberately rather than defaulted.
+          caSubject:
+            country: DE
+            organization: 2143 Labs
+            commonName: trust.hero-rehab.xyz
           controllerManager:
             enabled: true
           federation:
-            # NOTE: rendered server.conf selects the https_spiffe bundle
-            # profile, not https_web. The public-route mechanism documented in
-            # the plan (Cloudflare origin + noTLSVerify, which assumes the
-            # publicly-trusted-cert validation of https_web) therefore does not
-            # apply as written and must be revisited before federation is
-            # exposed. Nothing consumes this yet — the endpoint is only on the
-            # in-cluster Service spire-server:8443.
+            # Serves the bundle endpoint over HTTPS on the in-cluster Service
+            # only. The rendered profile is https_spiffe while
+            # federation.tls.spire.enabled is true (the default); switching to
+            # https_web requires a serving certificate, which phase C does by
+            # deploying cert-manager and setting federation.tls.certManager.
             enabled: true
             bundleEndpoint:
               port: 8443

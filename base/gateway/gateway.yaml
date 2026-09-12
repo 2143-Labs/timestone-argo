@@ -1,6 +1,15 @@
-# The single routing source. Gateway + all HTTPRoutes live in ns `default`;
-# same-namespace attachment is declared explicitly because the Gateway API
-# defaulting (from: Same) otherwise re-appears and drifts ArgoCD OutOfSync.
+# The single routing source. Gateway + almost all HTTPRoutes live in ns
+# `default`; the one exception is the SPIFFE OIDC route, which must sit in the
+# namespace that owns its backend Service (`spire-server`) because Gateway API
+# resolves backendRefs only within the route's own namespace.
+#
+# That is why the listener below selects namespaces explicitly rather than
+# relying on the `Same` default. `Same` names only `default`, and the
+# replacement must list BOTH namespaces: a single-entry selector for
+# `spire-server` alone would silently detach the whoami and pocket-id routes
+# with NotAllowedByListeners, since `same` and `selector` are alternatives, not
+# additive rules.
+#
 # Plain HTTP :80 only — TLS terminates at the Cloudflare edge, so no cert refs.
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -15,4 +24,11 @@ spec:
       protocol: HTTP
       allowedRoutes:
         namespaces:
-          from: Same
+          from: Selector
+          selector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values:
+                  - default
+                  - spire-server

@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hello-openbao
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: base/apps/hello-openbao
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # The Deployment references a Secret that nothing in Git creates — it is
+    # written at runtime by openbao-secret-sync. Without this, the very first
+    # sync fails with CreateContainerConfigError on a missing Secret and Argo
+    # marks the Application Degraded before the sync loop has had a chance to
+    # run. Ordering between the two is intentionally not expressed as a wave:
+    # the sync pod only needs SPIRE, not the consumer.
+    syncOptions:
+      - SkipDryRunOnMissingResource=true
