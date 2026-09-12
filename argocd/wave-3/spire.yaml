@@ -19,6 +19,20 @@ spec:
       releaseName: spire
       values: |
         global:
+          # The chart ships kubectl jobs that patch the webhook's failurePolicy
+          # around install/upgrade (pre-upgrade -> Ignore, post-* -> Fail).
+          # ArgoCD renders with `helm template` and runs those helm.sh hooks as
+          # Argo PreSync/PostSync hooks, which breaks their ordering assumption:
+          # the pre-upgrade job patches default-spire-controller-manager-webhook
+          # BEFORE the webhook exists on a first sync, so it errors with
+          # NotFound and deadlocks the sync. The chart documents these as
+          # "should be disabled when using helm template". Disabling leaves the
+          # webhook at its steady-state failurePolicy: Fail, identical to a
+          # clean `helm install` after its post-install hook.
+          installAndUpgradeHooks:
+            enabled: false
+          deleteHooks:
+            enabled: false
           spire:
             trustDomain: trust.hero.rehab
             clusterName: timestone
