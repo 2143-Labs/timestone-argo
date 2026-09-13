@@ -30,4 +30,8 @@ data:
       # bundle endpoint is NOT exposed here (see argocd/wave-3/spire.yaml).
       - hostname: spiffe.hero-rehab.xyz
         service: http://traefik.traefik.svc:80
+      # Raw TCP preserves the API server certificate end to end. Cloudflare
+      # Access for this exact hostname must exist before this route is added.
+      - hostname: k8s.hero-rehab.xyz
+        service: tcp://kubernetes.default.svc:443
       - service: http_status:404
