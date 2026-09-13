@@ -1,6 +1,6 @@
 # Two containers in one pod:
 #   spiffe-helper — maintains a JWT-SVID on a shared emptyDir
-#   sync          — decodes that SVID, exchanges it at OpenBao for a token,
+#   sync          — reads that SVID, exchanges it at OpenBao for a token,
 #                   reads one KV path, and writes the result to a Secret
 #
 # Both halves were needed because nothing off the shelf can do this: External
@@ -46,6 +46,11 @@ spec:
         # The ClusterSPIFFEID's podSelector. Without this label the pod gets no
         # registration entry and every login attempt fails at the Workload API.
         spire.io/openbao-identity: "true"
+      annotations:
+        # /scripts/sync.sh is a subPath ConfigMap mount, and those never update
+        # inside a running pod. Bump this when the ConfigMap changes so the
+        # Deployment rolls and re-reads the script.
+        timestone.io/config-revision: "2"
     spec:
       serviceAccountName: openbao-secret-sync
       securityContext:

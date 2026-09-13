@@ -69,19 +69,25 @@ data:
         return 1
       fi
 
-      # spiffe-helper writes the JWT-SVID Base64-encoded.
-      SVID=$(base64 -d "$SVID_FILE" 2>/dev/null | tr -d '\r\n')
+      # spiffe-helper writes the JWT-SVID as plain text: the file begins with the
+      # JWT header `ey`. Base64-decoding it yielded a truncated string that
+      # OpenBao rejected with HTTP 400, so it is read verbatim.
+      SVID=$(tr -d '\r\n' < "$SVID_FILE")
       if [ -z "$SVID" ]; then
-        log "could not decode $SVID_FILE"
+        log "could not read a JWT-SVID from $SVID_FILE"
         return 1
       fi
 
-      LOGIN=$(curl -sf -X POST "$BAO_ADDR/v1/auth/jwt-timestone/login" \
+      # Capture the status code: `curl -f` alone hides why a login was refused.
+      LOGIN=$(curl -s -w '\n%{http_code}' -X POST "$BAO_ADDR/v1/auth/jwt-timestone/login" \
         -H 'Content-Type: application/json' \
-        --data "{\"role\":\"hello\",\"jwt\":\"$SVID\"}") || {
-        log "OpenBao login request failed"
+        --data "{\"role\":\"hello\",\"jwt\":\"$SVID\"}")
+      CODE=$(printf '%s' "$LOGIN" | tail -n1)
+      if [ "$CODE" != "200" ]; then
+        log "OpenBao login failed (http $CODE)"
         return 1
-      }
+      fi
+      LOGIN=$(printf '%s' "$LOGIN" | sed '$d')
 
       TOKEN=$(printf '%s' "$LOGIN" | sed -n 's/.*"client_token":"\([^"]*\)".*/\1/p')
       if [ -z "$TOKEN" ]; then
