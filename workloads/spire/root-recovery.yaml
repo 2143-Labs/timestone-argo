@@ -9,6 +9,8 @@ metadata:
   namespace: argocd
   annotations:
     resources-finalizer.argocd.argoproj.io: "true"
+    argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
 spec:
   project: default
   source:
