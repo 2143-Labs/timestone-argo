@@ -4,7 +4,7 @@ metadata:
   name: spire-policies
   namespace: argocd
   annotations:
-    # SPIRE itself and the Cilium policy CRDs already exist by this wave.
+    # SPIRE itself and the CiliumNetworkPolicy CRD already exist by this wave.
     argocd.argoproj.io/sync-wave: "4"
   finalizers:
     - resources-finalizer.argocd.argoproj.io
