@@ -1,0 +1,19 @@
+# Ingress is denied by default here.
+#
+# Neither pod in this namespace serves traffic — openbao-secret-sync only makes
+# outbound calls, and hello-openbao's Service is a smoke test that is reached
+# deliberately rather than by everything in the cluster. There is therefore no
+# allow rule to add: this policy is complete as written.
+#
+# Ingress-only on purpose. An egress policy would have to permit DNS, the
+# Kubernetes API and the public OpenBao endpoint, and getting that list wrong
+# breaks the sync loop silently. Identity theft is an ingress-side concern, so
+# the default-deny is confined to the direction that matters.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: openbao-sync
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]

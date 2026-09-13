@@ -11,11 +11,14 @@
 # So the SPIFFE consumer is a sidecar, which also keeps the blast radius at one
 # pod instead of a cluster-wide operator.
 #
-# Placement note: this pod stays in `default` (PodSecurity baseline) because the
-# ClusterSPIFFEID selects namespace `default` and this pod must match it. It
-# needs no host namespaces, no hostPath and no hostPort, so baseline is enough —
-# unlike the SPIRE agent and CSI driver, which the chart places in `spire-system`
-# precisely because they do.
+# Placement: this pod lives in `openbao-sync` (PodSecurity baseline), a
+# namespace that exists only for this workload and the consumer that reads its
+# Secret. It previously sat in `default`, where — because the ClusterSPIFFEID
+# matches on namespace plus ServiceAccount — any pod in that shared namespace
+# carrying the right label and ServiceAccount would have inherited this SPIFFE
+# ID. It needs no host namespaces, no hostPath and no hostPort, so baseline is
+# enough — unlike the SPIRE agent and CSI driver, which the chart places in
+# `spire-system` precisely because they do.
 #
 # UID: one UID for the whole pod so the sync container can read the 0640 SVID
 # that the helper writes. The helper image is distroless and carries no USER, so
@@ -25,6 +28,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: openbao-secret-sync
+  namespace: openbao-sync
   labels:
     app: openbao-secret-sync
 spec:

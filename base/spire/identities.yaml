@@ -4,8 +4,7 @@
 # fallback entry (`default-spire-default`) deliberately EXCLUDES the `default`
 # namespace via namespaceSelector matchExpressions, and the two non-fallback
 # entries select only the chart's own components. Nothing therefore registers an
-# identity for an ordinary workload in `default`, which is where every timestone
-# workload lives. This entry fills exactly that gap.
+# identity for the sync workload below, so this entry fills exactly that gap.
 #
 # className is REQUIRED here, not decorative. The chart configures the
 # controller manager with className "default-spire" and watchClassless false,
@@ -34,4 +33,9 @@ spec:
       spire.io/openbao-identity: "true"
   namespaceSelector:
     matchLabels:
-      kubernetes.io/metadata.name: default
+      # A dedicated namespace, not `default`. The SPIFFE ID embeds the
+      # namespace, so scoping the selector this way is what stops any pod that
+      # can be created in `default` from inheriting this identity simply by
+      # using the same ServiceAccount and label. See
+      # workloads/openbao-sync/namespace.yaml.
+      kubernetes.io/metadata.name: openbao-sync

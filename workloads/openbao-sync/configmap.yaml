@@ -26,7 +26,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: openbao-secret-sync
-  namespace: default
+  namespace: openbao-sync
 data:
   helper.conf: |
     agent_address      = "/spiffe-workload-api/spire-agent.sock"
@@ -57,7 +57,7 @@ data:
     SA_DIR=/var/run/secrets/kubernetes.io/serviceaccount
     K8S="https://kubernetes.default.svc"
     SECRET_NAME=openbao-steam
-    SECRET_NS=default
+    SECRET_NS=openbao-sync
     SVID_FILE=/spiffe/svid.jwt
     INTERVAL_SECONDS=300
 
@@ -127,7 +127,7 @@ data:
       esac
     }
 
-    log "starting: every ${INTERVAL_SECONDS}s as spiffe://trust.hero-rehab.xyz/ns/default/sa/openbao-secret-sync"
+    log "starting: every ${INTERVAL_SECONDS}s as spiffe://trust.hero-rehab.xyz/ns/openbao-sync/sa/openbao-secret-sync"
     while true; do
       sync_once || true
       sleep "$INTERVAL_SECONDS"

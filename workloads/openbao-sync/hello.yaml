@@ -7,12 +7,17 @@
 # If it ever needs its own identity, that is a policy decision (a per-workload
 # SPIFFE ID and a matching OpenBao role), not a configuration tweak.
 #
+# It lives in `openbao-sync` rather than `default` so it can read the Secret by
+# name without a cross-namespace copy: `secretKeyRef` resolves only within the
+# pod's own namespace.
+#
 # Image and shape mirror base/apps/whoami so the smoke-test surface stays
 # uniform. No HTTPRoute: this is not exposed through the tunnel.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hello-openbao
+  namespace: openbao-sync
   labels:
     app: hello-openbao
 spec:
@@ -71,3 +76,23 @@ spec:
             initialDelaySeconds: 1
             periodSeconds: 5
             failureThreshold: 3
+---
+# ClusterIP only. Present so the smoke test is reachable in-cluster (and via
+# `kubectl port-forward`) without going through the tunnel: it carries no
+# HTTPRoute, because base/gateway/routes.yaml's rule is no gate ⇒ no route.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-openbao
+  namespace: openbao-sync
+  labels:
+    app: hello-openbao
+spec:
+  type: ClusterIP
+  selector:
+    app: hello-openbao
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http

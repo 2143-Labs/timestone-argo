@@ -1,0 +1,27 @@
+# Dedicated namespace for the OpenBao secret-sync consumer and the workload
+# that reads its Secret.
+#
+# Why not `default`: the ClusterSPIFFEID matches on namespace + ServiceAccount
+# and the rendered SPIFFE ID embeds the namespace. While this workload lived in
+# `default`, anything able to create a Pod there using the
+# `openbao-secret-sync` ServiceAccount and the `spire.io/openbao-identity` label
+# obtained the identical SPIFFE ID — and therefore the same OpenBao login and
+# the same KV read. `default` holds every other timestone workload, so that was
+# a shared-identity problem rather than a least-privilege one.
+#
+# The namespace is deliberately NOT named after the secret it carries, and the
+# name is load-bearing: it is part of
+#   spiffe://trust.hero-rehab.xyz/ns/openbao-sync/sa/openbao-secret-sync
+# which OpenBao's `bound_subject` matches exactly. Renaming it breaks the login.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openbao-sync
+  labels:
+    # Same posture as `default`, stated explicitly so the namespace cannot
+    # silently regress: these pods need no host namespaces, no hostPath and no
+    # hostPort. Unlike the SPIRE agent and CSI driver — which the chart places
+    # in spire-system precisely because they do — baseline is sufficient here.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
