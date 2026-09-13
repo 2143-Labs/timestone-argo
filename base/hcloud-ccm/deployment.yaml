@@ -61,6 +61,10 @@ spec:
                 secretKeyRef:
                   key: token
                   name: hcloud
+            # Without this the controller reconciles only the public address, so
+            # the private InternalIP from the Hetzner network never survives.
+            - name: HCLOUD_NETWORK
+              value: timestone-net
             - name: ROBOT_PASSWORD
               valueFrom:
                 secretKeyRef:
