@@ -23,6 +23,9 @@ spec:
     path: argocd
     directory:
       recurse: true
+      # This file is applied by the bootstrap script; do not make the
+      # Application synchronize itself while recursively discovering children.
+      exclude: root-app.yaml
   destination:
     server: https://kubernetes.default.svc # each cluster's own in-cluster ArgoCD
   syncPolicy:
