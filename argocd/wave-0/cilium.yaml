@@ -1,0 +1,65 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cilium
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: cilium
+    repoURL: https://helm.cilium.io
+    # Resolved 2026-09-12 from the helm.cilium.io index: chart 1.20.1 ships
+    # Cilium v1.20.1 (supports Kubernetes 1.33-1.36; timestone runs 1.35.8).
+    # Upgrades are separate follow-up commits, never "latest".
+    targetRevision: 1.20.1
+    helm:
+      releaseName: cilium
+      values: |
+        cluster:
+          name: timestone
+          id: 1
+        ipam:
+          mode: kubernetes
+        routingMode: native
+        # endpointRoutes is deliberately absent. Cilium force-disables BPF host
+        # routing whenever endpoint routes are enabled (it logs "BPF host routing
+        # is currently not supported with enable-endpoint-routes") and falls back
+        # to legacy host routing. With kube-proxy replaced that leaves hostNetwork
+        # pods with no path to any ClusterIP — which is exactly why the SPIRE
+        # agents could not reach the server. BPF host routing requires
+        # bpf.masquerade, and native routing needs the pod CIDR stated explicitly.
+        bpf:
+          masquerade: true
+        ipv4NativeRoutingCIDR: 10.244.0.0/16
+        kubeProxyReplacement: true
+        k8sServiceHost: localhost
+        k8sServicePort: 7445
+        encryption:
+          enabled: true
+          type: wireguard
+        securityContext:
+          capabilities:
+            ciliumAgent: [CHOWN, KILL, NET_ADMIN, NET_RAW, IPC_LOCK, SYS_ADMIN, SYS_CHROOT, DAC_OVERRIDE, SETGID, SETUID]
+            cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_CHROOT]
+        cgroup:
+          autoMount:
+            enabled: false
+          hostRoot: /sys/fs/cgroup
+        hubble:
+          enabled: false
+        operator:
+          replicas: 1
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
