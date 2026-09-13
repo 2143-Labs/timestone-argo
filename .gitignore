@@ -4,3 +4,7 @@
 # Local
 .envrc
 .DS_Store
+
+# Operator runtime and test output (never commit)
+.runtime/
+.tools/
