@@ -50,7 +50,7 @@ spec:
         # /scripts/sync.sh is a subPath ConfigMap mount, and those never update
         # inside a running pod. Bump this when the ConfigMap changes so the
         # Deployment rolls and re-reads the script.
-        timestone.io/config-revision: "2"
+        timestone.io/config-revision: "3"
     spec:
       serviceAccountName: openbao-secret-sync
       securityContext:
