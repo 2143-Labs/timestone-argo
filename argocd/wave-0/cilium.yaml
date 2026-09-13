@@ -24,17 +24,25 @@ spec:
           id: 1
         ipam:
           mode: kubernetes
-        routingMode: native
-        # endpointRoutes is deliberately absent. Cilium force-disables BPF host
-        # routing whenever endpoint routes are enabled (it logs "BPF host routing
-        # is currently not supported with enable-endpoint-routes") and falls back
-        # to legacy host routing. With kube-proxy replaced that leaves hostNetwork
-        # pods with no path to any ClusterIP — which is exactly why the SPIRE
-        # agents could not reach the server. BPF host routing requires
-        # bpf.masquerade, and native routing needs the pod CIDR stated explicitly.
+        # Encapsulated routing, not native. With native routing plus
+        # ipv4NativeRoutingCIDR, Cilium assumes the underlying network routes pod
+        # CIDRs and deliberately does NOT install per-node routes for them.
+        # Nothing does route them here: the Hetzner route for the pod CIDR would
+        # have to be programmed by hcloud-ccm, and the CCM cannot (see the
+        # golden-image blocker in the infra repo). The observed result was a
+        # node routing table with only its own pod CIDR — `10.244.0.0/24 via
+        # cilium_host` — so a pod could not reach a ClusterIP backed by another
+        # node, which is what stalled ArgoCD's redis (dial tcp 10.96.0.1:443).
+        # VXLAN encapsulates between node IPs, which the private network does
+        # route, so pod traffic needs no cloud route programming at all.
+        routingMode: tunnel
+        # endpointRoutes stays absent: Cilium force-disables BPF host routing
+        # whenever endpoint routes are enabled, and falls back to legacy host
+        # routing. With kube-proxy replaced that leaves hostNetwork pods with no
+        # path to any ClusterIP. BPF host routing requires bpf.masquerade, and
+        # it works with tunneling as well as native routing.
         bpf:
           masquerade: true
-        ipv4NativeRoutingCIDR: 10.244.0.0/16
         kubeProxyReplacement: true
         k8sServiceHost: localhost
         k8sServicePort: 7445
