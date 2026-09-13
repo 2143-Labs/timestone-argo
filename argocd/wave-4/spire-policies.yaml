@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: spire-policies
+  namespace: argocd
+  annotations:
+    # SPIRE itself and the Cilium policy CRDs already exist by this wave.
+    argocd.argoproj.io/sync-wave: "4"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: workloads/spire-policies
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: spire-server
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - SkipDryRunOnMissingResource=true

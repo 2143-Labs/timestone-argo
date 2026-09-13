@@ -1,0 +1,94 @@
+# Ingress is denied by default in both SPIRE namespaces. Allows are applied one
+# Argo sync wave earlier so a fresh cluster never has a deny-only window.
+#
+# Standard NetworkPolicy cannot identify the hostNetwork SPIRE agents or the
+# kube-apiserver. Cilium assigns the control-plane address the reserved `host`
+# identity, while agents on workers arrive as `remote-node`; the two Cilium
+# policies below are therefore limited to those entities and exact ports.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: spire-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-to-oidc
+  namespace: spire-server
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: spiffe-oidc-discovery-provider
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: spire-server
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-agent-to-server
+  namespace: spire-server
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: server
+  ingress:
+    - fromEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kube-apiserver-webhook
+  namespace: spire-server
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: server
+  ingress:
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
