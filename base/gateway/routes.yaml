@@ -36,27 +36,3 @@ spec:
           name: whoami
           port: 80
           weight: 1
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: umvc3
-  namespace: default
-spec:
-  parentRefs:
-    - group: gateway.networking.k8s.io
-      kind: Gateway
-      name: timestone-gateway
-  hostnames:
-    - "umvc3-ranked.hero-rehab.xyz"
-  rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
-        - group: ""
-          kind: Service
-          name: umvc3
-          port: 80
-          weight: 1
