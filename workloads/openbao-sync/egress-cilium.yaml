@@ -1,0 +1,66 @@
+# Egress allowlist for the sync pod. Paired with the `default-deny-egress`
+# NetworkPolicy in networkpolicy.yaml: that policy renders the deny, this policy
+# re-permits exactly the destinations the sync loop needs, and nothing else.
+#
+# Shape notes, verified against the LIVE CRD schema (ciliumnetworkpolicies.
+# cilium.io, v2) rather than from memory:
+#   * `toEndpoints` is a list of LabelSelector — `matchLabels` sits directly on
+#     the list item. There is NO `selectors:` wrapper.
+#   * `matchLabels` takes the PLAIN Kubernetes label keys; Cilium maps them to
+#     its internal `k8s:<key>` form. So the pod with k8s label `app=x` is
+#     selected by `app: x`, and the namespace by `io.kubernetes.pod.namespace`.
+#   * `toFQDNs` is a list of `{matchName: ...}` objects, NOT a list of strings.
+# Getting any of those wrong makes the policy silently match nothing, which with
+# Cilium's permit-by-default means the intended restriction does not exist.
+#
+# The SPIFFE Workload API needs no rule: it is a UNIX socket exposed on the node
+# (/spiffe-workload-api/spire-agent.sock), not network traffic.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: openbao-sync-egress
+  namespace: openbao-sync
+spec:
+  endpointSelector:
+    matchLabels:
+      # The pod label is the short `app` key, confirmed via CiliumIdentity.
+      app: openbao-secret-sync
+  egress:
+    # 1. Cluster DNS. coredns carries `k8s-app: kube-dns` in ns kube-system.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # 2. Kubernetes API. The sync script talks to kubernetes.default.svc (443),
+    #    which under kubeProxyReplacement resolves to the API server. Here the
+    #    API server is a hostNetwork static pod, so it can present as the
+    #    kube-apiserver entity or as host/remote-node; all three are listed and
+    #    strictly port-scoped, so this cannot reach an application port on a
+    #    node. Without this rule the Secret write fails and the sync loop breaks.
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+            - port: "7445"
+              protocol: TCP
+    # 3. The single public endpoint this workload may reach. Requires the Cilium
+    #    DNS proxy, which is already live (dnsproxy-enable-transparent-mode:
+    #    true), so no chart change is needed.
+    - toFQDNs:
+        - matchName: openbao.john2143.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
