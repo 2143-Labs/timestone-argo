@@ -59,8 +59,10 @@ spec:
           hostRoot: /sys/fs/cgroup
         hubble:
           enabled: false
+        # Keep the operator available while one of the three schedulable
+        # control-plane nodes is drained or upgraded.
         operator:
-          replicas: 1
+          replicas: 2
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-system
