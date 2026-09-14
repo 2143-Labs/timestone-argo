@@ -21,7 +21,7 @@
 #                    until an SVID has actually been written, which is precisely
 #                    the signal worth probing.
 #
-# The written file is Base64-encoded, not raw JWT — the sync script decodes it.
+# The helper writes the JWT-SVID as plain text; the sync script reads it verbatim.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -78,8 +78,11 @@ data:
         return 1
       fi
 
-      # Capture the status code: `curl -f` alone hides why a login was refused.
-      LOGIN=$(curl -s -w '\n%{http_code}' -X POST "$BAO_ADDR/v1/auth/jwt-timestone/login" \
+      # Retry transient DNS/transport failures inside a sync pass instead of
+      # waiting five minutes. HTTP 4xx responses are not retried by curl.
+      LOGIN=$(curl -s --retry 3 --retry-delay 2 --retry-connrefused \
+        --connect-timeout 10 --max-time 30 -w '\n%{http_code}' \
+        -X POST "$BAO_ADDR/v1/auth/jwt-timestone/login" \
         -H 'Content-Type: application/json' \
         --data "{\"role\":\"hello\",\"jwt\":\"$SVID\"}")
       CODE=$(printf '%s' "$LOGIN" | tail -n1)
@@ -95,7 +98,8 @@ data:
         return 1
       fi
 
-      KV=$(curl -sf -H "X-Vault-Token: $TOKEN" \
+      KV=$(curl -sf --retry 3 --retry-delay 2 --retry-connrefused \
+        --connect-timeout 10 --max-time 30 -H "X-Vault-Token: $TOKEN" \
         "$BAO_ADDR/v1/consumers/data/hero-rehab/steam") || {
         log "OpenBao KV read failed"
         return 1
