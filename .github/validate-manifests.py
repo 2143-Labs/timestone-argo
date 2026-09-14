@@ -7,7 +7,9 @@ Parse every YAML file; enforce the repo conventions that keep ArgoCD healthy:
   - argocd/wave-N/*.yaml are Applications with a numeric sync-wave annotation
     and a concrete https repoURL (never empty/placeholder)
   - base/ manifests are namespaced by the Application destination (default);
-    an explicit metadata.namespace is allowed only when it equals "default"
+    an explicit metadata.namespace is allowed only when it equals "default",
+    except for the directories in NAMESPACE_ALLOWLIST whose resources must live
+    in a fixed system namespace
 
 Exit code 0 = OK. Run in CI (see .github/workflows/validate.yml).
 """
@@ -20,6 +22,12 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 errors: list[str] = []
+
+# Directories whose manifests legitimately live outside the default destination
+# namespace (e.g. the cloud controller manager must run in kube-system).
+NAMESPACE_ALLOWLIST: dict[str, set[str]] = {
+    "hcloud-ccm": {"kube-system"},
+}
 checked = 0
 
 
@@ -60,11 +68,13 @@ for path in sorted(ROOT.rglob("*.yaml")):
                 add(kind, name, f"{path}: repoURL must be a concrete https URL (got {repo!r})")
         elif "base" in path.parts:
             # base/ manifests are namespaced by the Application destination
-            # (default); an explicit namespace is allowed only if it matches.
+            # (default); an explicit namespace is allowed only if it matches, or
+            # if this directory has a documented system-namespace exception.
             ns = meta.get("namespace")
-            if ns is not None and ns != "default":
-                add(kind, name, f"{path}: base/ manifest namespace must be default "
-                                f"(destination namespace), got {ns!r}")
+            allowed = {"default"} | NAMESPACE_ALLOWLIST.get(path.parent.name, set())
+            if ns is not None and ns not in allowed:
+                add(kind, name, f"{path}: base/ manifest namespace must be one of "
+                                f"{sorted(allowed)} (destination namespace), got {ns!r}")
 
 print(f"checked {checked} documents")
 if errors:
