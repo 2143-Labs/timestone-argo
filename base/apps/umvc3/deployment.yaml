@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: umvc3
+  labels:
+    app: umvc3
+spec:
+  revisionHistoryLimit: 3
+  progressDeadlineSeconds: 300
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: umvc3
+  template:
+    metadata:
+      labels:
+        app: umvc3
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: umvc3
+          # Pinned to the top-level registry digest of steam-lobby run #46
+          # (commit 3d507b8d). Never a mutable tag.
+          image: ghcr.io/2143-labs/steam-lobby@sha256:e395fdefea4467ad88dc5badf8e56a541c8b8fef52906c5a22cc31cdf5a56b4e
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: umvc3-db-app
+                  key: uri
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: umvc3-app
+                  key: JWT_SECRET
+            - name: STEAM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: umvc3-runtime
+                  key: STEAM_API_KEY
+            - name: GAME_MODES
+              value: umvc3_1v1:p2p
+            - name: PUBLIC_URL
+              value: https://umvc3-ranked.hero-rehab.xyz
+            - name: CORS_ORIGINS
+              value: https://umvc3-ranked.hero-rehab.xyz
+            - name: AUTH_DEV_MODE
+              value: "false"
+            - name: STEAM_BACKED_ACCOUNTS_ONLY
+              value: "true"
+            - name: RANKED_QUEUE_ENABLED
+              value: "false"
+            - name: RANKED_QUEUE_LEASE_S
+              value: "45"
+            - name: STEAM_APP_ID
+              value: "357190"
+            - name: MATCH_ACCEPT_TIMEOUT_S
+              value: "15"
+            - name: UMVC3_TRYING_TIMEOUT_S
+              value: "15"
+            - name: UMVC3_CONNECT_TIMEOUT_S
+              value: "30"
+            - name: UMVC3_READY_TIMEOUT_S
+              value: "60"
+            - name: UMVC3_PLAY_TIMEOUT_S
+              value: "7200"
+            - name: REPORT_TIMEOUT_S
+              value: "300"
+            - name: TEMPORAL_ADDRESS
+              value: http://temporal-frontend:7233
+            - name: TEMPORAL_NAMESPACE
+              value: timestone
+            - name: TEMPORAL_TASK_QUEUE
+              value: umvc3
+            - name: DISCORD_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: umvc3-app
+                  key: DISCORD_CLIENT_ID
+                  optional: true
+            - name: DISCORD_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: umvc3-app
+                  key: DISCORD_CLIENT_SECRET
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3

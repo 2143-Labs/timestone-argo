@@ -1,0 +1,33 @@
+# Ranked UMVC3 database. This Cluster and its PVCs are retained during
+# application rollback; schema migrations are additive and data is never pruned.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: umvc3-db
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.15
+  storage:
+    size: 8Gi
+    storageClass: hcloud-volumes
+  walStorage:
+    size: 4Gi
+    storageClass: hcloud-volumes
+  bootstrap:
+    initdb:
+      database: umvc3_ranked
+      owner: umvc3
+  # Same cross-pod access rule as the proven `timestone` Cluster: without an
+  # explicit pg_hba the application pods' connections are not accepted.
+  postgresql:
+    pg_hba:
+      - host all all 0.0.0.0/0 scram-sha-256
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi

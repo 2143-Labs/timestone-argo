@@ -1,0 +1,50 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: temporal-namespace-timestone
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: temporal-namespace-bootstrap
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: namespace
+          image: temporalio/admin-tools:1.31.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+            - |
+              ADDRESS=temporal-frontend:7233
+              NAMESPACE=timestone
+              if temporal operator namespace describe --address "$ADDRESS" --namespace "$NAMESPACE"; then
+                temporal operator namespace update --address "$ADDRESS" --namespace "$NAMESPACE" --retention 72h
+              else
+                temporal operator namespace create --address "$ADDRESS" --namespace "$NAMESPACE" --retention 72h
+              fi
+              temporal operator namespace describe --address "$ADDRESS" --namespace "$NAMESPACE"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

@@ -56,12 +56,65 @@ data:
     BAO_ADDR="https://openbao.john2143.com"
     SA_DIR=/var/run/secrets/kubernetes.io/serviceaccount
     K8S="https://kubernetes.default.svc"
-    SECRET_NAME=openbao-steam
-    SECRET_NS=openbao-sync
     SVID_FILE=/spiffe/svid.jwt
     INTERVAL_SECONDS=300
 
     log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+
+    write_secret() {
+      SECRET_NS=$1
+      SECRET_NAME=$2
+      SECRET_KEY=$3
+      SECRET_VALUE=$4
+      SECRET_URL="$K8S/api/v1/namespaces/$SECRET_NS/secrets/$SECRET_NAME"
+      COLLECTION_URL="$K8S/api/v1/namespaces/$SECRET_NS/secrets"
+      TOKEN=$(cat "$SA_DIR/token")
+      B64=$(printf '%s' "$SECRET_VALUE" | base64 | tr -d '\r\n')
+
+      LOOKUP=$(curl -s --cacert "$SA_DIR/ca.crt" \
+        -H "Authorization: Bearer $TOKEN" -w '\n%{http_code}' "$SECRET_URL")
+      GET_CODE=$(printf '%s' "$LOOKUP" | tail -n1)
+      EXISTING=$(printf '%s' "$LOOKUP" | sed '$d')
+      case "$GET_CODE" in
+        200)
+          RESOURCE_VERSION=$(printf '%s' "$EXISTING" | sed -n 's/.*"resourceVersion":"\([^"]*\)".*/\1/p')
+          if [ -z "$RESOURCE_VERSION" ]; then
+            log "secret lookup returned no resourceVersion for $SECRET_NS/$SECRET_NAME"
+            return 1
+          fi
+          METHOD=PUT
+          URL=$SECRET_URL
+          VERSION_FIELD=",\"resourceVersion\":\"$RESOURCE_VERSION\""
+          ;;
+        404)
+          METHOD=POST
+          URL=$COLLECTION_URL
+          VERSION_FIELD=
+          ;;
+        *)
+          log "secret lookup failed for $SECRET_NS/$SECRET_NAME (http $GET_CODE)"
+          return 1
+          ;;
+      esac
+
+      BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\"$VERSION_FIELD,\"labels\":{\"app.kubernetes.io/managed-by\":\"openbao-secret-sync\"}},\"type\":\"Opaque\",\"data\":{\"$SECRET_KEY\":\"$B64\"}}"
+      CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$METHOD" \
+        --cacert "$SA_DIR/ca.crt" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H 'Content-Type: application/json' \
+        --data "$BODY" \
+        "$URL")
+      case "$CODE" in
+        200|201)
+          log "synced $SECRET_NS/$SECRET_NAME key $SECRET_KEY (http $CODE)"
+          return 0
+          ;;
+        *)
+          log "secret write failed for $SECRET_NS/$SECRET_NAME (http $CODE)"
+          return 1
+          ;;
+      esac
+    }
 
     sync_once() {
       if [ ! -s "$SVID_FILE" ]; then
@@ -115,42 +168,14 @@ data:
         return 1
       fi
 
-      B64=$(printf '%s' "$VALUE" | base64 | tr -d '\r\n')
-      BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\",\"labels\":{\"app.kubernetes.io/managed-by\":\"openbao-secret-sync\"}},\"type\":\"Opaque\",\"data\":{\"steam\":\"$B64\"}}"
-
-      # POST (create) the first time, PUT (update) afterwards. A PUT against a
-      # Secret that does not exist is refused with 404 rather than creating it,
-      # because the Secret strategy disallows create-on-update — which is why
-      # the `create` grant was never exercised and every write failed. The verb
-      # is therefore chosen by probing with GET, and both verbs are already
-      # granted by the Role, so no permission is widened.
-      SECRET_URL="$K8S/api/v1/namespaces/$SECRET_NS/secrets/$SECRET_NAME"
-      if [ "$(curl -s -o /dev/null -w '%{http_code}' --cacert "$SA_DIR/ca.crt" \
-            -H "Authorization: Bearer $(cat "$SA_DIR/token")" "$SECRET_URL")" = "200" ]; then
-        METHOD=PUT
-        URL="$SECRET_URL"
-      else
-        METHOD=POST
-        URL="$K8S/api/v1/namespaces/$SECRET_NS/secrets"
-      fi
-
-      CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$METHOD" \
-        --cacert "$SA_DIR/ca.crt" \
-        -H "Authorization: Bearer $(cat "$SA_DIR/token")" \
-        -H 'Content-Type: application/json' \
-        --data "$BODY" \
-        "$URL")
-
-      case "$CODE" in
-        200|201)
-          log "synced $SECRET_NS/$SECRET_NAME (http $CODE)"
-          return 0
-          ;;
-        *)
-          log "secret write failed (http $CODE)"
-          return 1
-          ;;
-      esac
+      # The same approved Steam value is supplied to the isolated sync consumer
+      # and to the ranked workload. A pass succeeds only when both destinations
+      # have accepted the value; no credential is printed.
+      FIRST_OK=true
+      write_secret openbao-sync openbao-steam steam "$VALUE" || FIRST_OK=false
+      SECOND_OK=true
+      write_secret default umvc3-runtime STEAM_API_KEY "$VALUE" || SECOND_OK=false
+      [ "$FIRST_OK" = true ] && [ "$SECOND_OK" = true ]
     }
 
     log "starting: every ${INTERVAL_SECONDS}s as spiffe://trust.hero-rehab.xyz/ns/openbao-sync/sa/openbao-secret-sync"
