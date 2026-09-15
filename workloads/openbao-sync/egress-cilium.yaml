@@ -26,7 +26,10 @@ spec:
       # The pod label is the short `app` key, confirmed via CiliumIdentity.
       app: openbao-secret-sync
   egress:
-    # 1. Cluster DNS. coredns carries `k8s-app: kube-dns` in ns kube-system.
+    # 1. Cluster DNS, through the L7 DNS proxy. The `rules.dns` block is what
+    #    makes Cilium record the FQDN->IP mapping that the toFQDNs rule below
+    #    depends on. Without it the FQDN cache stays empty, that rule matches
+    #    nothing, and egress to OpenBao is silently dropped.
     - toEndpoints:
         - matchLabels:
             k8s-app: kube-dns
@@ -37,6 +40,9 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
     # 2. Kubernetes API. The sync script talks to kubernetes.default.svc (443),
     #    which under kubeProxyReplacement resolves to the API server. Here the
     #    API server is a hostNetwork static pod, so it can present as the
@@ -55,9 +61,11 @@ spec:
               protocol: TCP
             - port: "7445"
               protocol: TCP
-    # 3. The single public endpoint this workload may reach. Requires the Cilium
-    #    DNS proxy, which is already live (dnsproxy-enable-transparent-mode:
-    #    true), so no chart change is needed.
+    # 3. The single public endpoint this workload may reach. This rule only
+    #    matches once rule 1 above carries its L7 `rules.dns` block, which is
+    #    what activates Cilium's DNS proxy for this endpoint and populates the
+    #    FQDN cache. The cluster-wide `dnsproxy-enable-transparent-mode: true`
+    #    setting alone does NOT do this -- that was the original defect here.
     - toFQDNs:
         - matchName: openbao.john2143.com
       toPorts:
