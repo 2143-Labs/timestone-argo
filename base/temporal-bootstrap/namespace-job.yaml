@@ -2,9 +2,16 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: temporal-namespace-timestone
+  # Managed (not a Sync hook): hooks are excluded from an Application's managed
+  # resources, so a hook-only app always compares as Synced and auto-sync never
+  # runs — the namespace was never created. As a managed Job the app is
+  # OutOfSync whenever this Job is absent or its spec changed, so the script
+  # runs on a fresh cluster and selfHeal re-runs it if the Job is deleted.
+  # No ttlSecondsAfterFinished: deleting the Job after success would make the
+  # app OutOfSync again and re-run the bootstrap on every reconcile. The script
+  # is idempotent (describe → update-or-create → describe), so re-runs are safe.
   annotations:
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-options: Force=true,Replace=true
 spec:
   activeDeadlineSeconds: 300
   backoffLimit: 6
