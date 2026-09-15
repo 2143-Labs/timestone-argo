@@ -31,7 +31,7 @@ spec:
         - name: umvc3
           # Pinned to the top-level registry digest of steam-lobby run #46
           # (commit 3d507b8d). Never a mutable tag.
-          image: ghcr.io/2143-labs/steam-lobby@sha256:e395fdefea4467ad88dc5badf8e56a541c8b8fef52906c5a22cc31cdf5a56b4e
+          image: ghcr.io/2143-labs/steam-lobby@sha256:da93ebc524910446898167b566d33360ed720fab5110ca271d472705d085e4c2
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
