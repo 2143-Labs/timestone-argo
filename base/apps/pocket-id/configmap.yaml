@@ -7,13 +7,25 @@
 # (same precedent as whoami). First-run setup creates the admin account;
 # PocketID's signup mode defaults to Disabled, so this is not open
 # self-registration.
+#
+# ANALYTICS_DISABLED is true. With it false, pocket-id POSTs a heartbeat to
+# https://analytics.pocket-id.org containing an instance UUID, first-seen and
+# last-seen timestamps, and the version. That host resolves to Cloudflare
+# addresses (172.67.210.10 / 104.21.50.197), so the flow would satisfy a
+# literal "egress only to Cloudflare" rule while still being the one outbound
+# third-party data flow in this cluster that nothing justifies. VERSION_CHECK
+# was already disabled; this is the same class of call.
+#
+# There is no config-reloader in this cluster and the Deployment carries no
+# configmap checksum annotation, so editing this file does NOT restart the pod.
+# Roll the Deployment after the configmap lands, or the old value stays live.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: pocket-id
   namespace: default
 data:
-  ANALYTICS_DISABLED: "false"
+  ANALYTICS_DISABLED: "true"
   APP_URL: https://id.hero-rehab.xyz
   AUDIT_LOG_RETENTION_DAYS: "90"
   DISABLE_RATE_LIMITING: "true"
