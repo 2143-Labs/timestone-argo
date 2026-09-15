@@ -253,8 +253,6 @@ spec:
     - fromEntities:
         - host
         - remote-node
-      toEntities:
-        - health
       toPorts:
         - ports:
             - port: "4240"
@@ -262,34 +260,28 @@ spec:
     - fromEntities:
         - host
         - remote-node
-      toEntities:
-        - health
       icmps:
         - fields:
             - type: "EchoRequest"
-          family: IPv4
+              family: IPv4
         - fields:
             - type: "EchoReply"
-          family: IPv4
+              family: IPv4
   egress:
-    - fromEntities:
-        - health
-      toEntities:
+    - toEntities:
         - host
         - remote-node
       toPorts:
         - ports:
             - port: "4240"
               protocol: TCP
-    - fromEntities:
-        - health
-      toEntities:
+    - toEntities:
         - host
         - remote-node
       icmps:
         - fields:
             - type: "EchoRequest"
-          family: IPv4
+              family: IPv4
         - fields:
             - type: "EchoReply"
-          family: IPv4
+              family: IPv4
