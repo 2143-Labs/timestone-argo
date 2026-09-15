@@ -1,0 +1,122 @@
+# Egress policy for `spire-server` (the SPIFFE trust-domain server).
+# ============================================================================
+# Same shape as every file in `workloads/egress/`: a namespace-wide k8s
+# NetworkPolicy `default-deny-egress` plus allow policies per workload.
+#
+# The trust domain here is `trust.hero-rehab.xyz`; the datastore is SQLite on a
+# PVC (/run/spire/data/datastore.sqlite3, chart default — no Postgres), so
+# there is no database egress. The OIDC provider serves traefik over its unix
+# socket (server unix:/run/spire/oidc-sockets/spire-oidc-server.sock), so there
+# is no localhost proxy leg either. Agents dial the server on 8081 and
+# admission webhooks hit it on 9443 — both are INGRESS, covered by the existing
+# `allow-agent-to-server` and `allow-kube-apiserver-webhook` policies, never by
+# an egress rule.
+#
+# Federation is served (bundle endpoint :8443, in-cluster Service only) and the
+# comment in argocd/wave-3/spire.yaml is explicit that neither
+# trust-do.2143.me nor trust.hero.rehab is ever a federation PEER here, so
+# there are no outbound federation connections to allow.
+# ============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-spire-server-egress
+  namespace: spire-server
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: server
+      io.kubernetes.pod.namespace: spire-server
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-spire-oidc-egress
+  namespace: spire-server
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: spiffe-oidc-discovery-provider
+      io.kubernetes.pod.namespace: spire-server
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: spire-server
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+---
+# ============================================================================
+# Egress policy for `spire-system` — the CSI driver.
+# ============================================================================
+# Deny-all egress with no allows. The only pod-network endpoints here are the
+# spiffe-csi-driver pods (spire-agent is host-network, so it is not a Cilium
+# endpoint and is never selected). The CSI drivers serve a mounted hostPath
+# socket and make no outbound connections of their own; the namespace has no
+# DNS or API consumer to preserve.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: spire-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
