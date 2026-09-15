@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: egress-prereqs
+  namespace: argocd
+  annotations:
+    # Wave 7: after every workload it protects. These are the universal allows
+    # (cluster DNS in both directions, the Kubernetes API, coredns's upstream
+    # resolver, and the two admission-webhook paths) that no per-namespace
+    # policy can express. They are installed here, permissively, so that the
+    # residual cluster-wide deny in wave 7's `east-west-stage4` Application can
+    # land without taking DNS, the API or admission down with it.
+    #
+    # Ordering within the cluster-wide deny itself does not matter: these
+    # policies are NON-ENFORCING (`enableDefaultDeny: false`), so applying them
+    # changes no traffic. Enforcement only begins when the Stage-4 deny lands.
+    argocd.argoproj.io/sync-wave: "7"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: workloads/egress-prereqs
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
