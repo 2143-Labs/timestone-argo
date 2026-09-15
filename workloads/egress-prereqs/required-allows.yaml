@@ -229,3 +229,67 @@ spec:
         - ports:
             - port: "9443"
               protocol: TCP
+---
+# Cilium's own inter-node health checking.
+#
+# Found by the C2 audit window: with the residual deny in place, the remote
+# nodes' health probes to each node's reserved `health` endpoint would be
+# DROPPED -- TCP 4240 and ICMP echo, inbound and outbound. The LOCAL node's
+# kubelet probes are permitted implicitly by `enable-health-checking: true`
+# (F11), but probes arriving at a node FROM another node present as the
+# reserved `remote-node` identity, which no implicit allow covers. Without
+# this rule the Cilium control plane itself degrades at enforcement time --
+# the exact thing that must never depend on a workaround.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-cilium-health-clusterwide
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    ingress: false
+    egress: false
+  ingress:
+    - fromEntities:
+        - host
+        - remote-node
+      toEntities:
+        - health
+      toPorts:
+        - ports:
+            - port: "4240"
+              protocol: TCP
+    - fromEntities:
+        - host
+        - remote-node
+      toEntities:
+        - health
+      icmps:
+        - fields:
+            - type: "EchoRequest"
+          family: IPv4
+        - fields:
+            - type: "EchoReply"
+          family: IPv4
+  egress:
+    - fromEntities:
+        - health
+      toEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "4240"
+              protocol: TCP
+    - fromEntities:
+        - health
+      toEntities:
+        - host
+        - remote-node
+      icmps:
+        - fields:
+            - type: "EchoRequest"
+          family: IPv4
+        - fields:
+            - type: "EchoReply"
+          family: IPv4
