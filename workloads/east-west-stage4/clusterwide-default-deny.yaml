@@ -100,5 +100,23 @@ spec:
   # explicitly authored policy (per-namespace NetworkPolicy/CNP, or the
   # companion allow file). Cilium still permits health-check traffic
   # implicitly, so kubelet probes keep working.
-  ingress: []
-  egress: []
+  #
+  # The `- {}` entries are the canonical default-deny form (Cilium docs,
+  # "empire-default-deny" example, `ingress: [- {}]`). An EMPTY rule LIST
+  # (`ingress: []`) is INVALID: the live CRD rejects it with "rule must have
+  # at least one of Ingress, IngressDeny, Egress, EgressDeny", which earlier
+  # versions of this file carried silently. A single EMPTY rule object
+  # satisfies the validator while permitting nothing by itself; with rules
+  # present the policy switches its selected endpoints (here: every Cilium
+  # endpoint) into default-deny mode, and the explicit allow policies
+  # (workloads/egress-prereqs + workloads/egress) are the only thing that
+  # re-permits traffic. Verified against the live CRD: the `- {}` form is
+  # Valid=True, and a probe pod selected by it is denied egress while an
+  # unselected control pod is not.
+  enableDefaultDeny:
+    ingress: true
+    egress: true
+  ingress:
+    - {}
+  egress:
+    - {}

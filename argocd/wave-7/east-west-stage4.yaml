@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: east-west-stage4
+  namespace: argocd
+  annotations:
+    # Wave 7: the residual cluster-wide deny. This Application is the safety
+    # boundary around enforcement: it is MANUAL-BY-DESIGN.
+    #
+    #   * No syncPolicy.automated block exists. Argo will never reconcile this
+    #     Application on its own, so a hand-deletion of the deny is NOT reverted
+    #     by self-heal — that is the entire rollback story in C4.
+    #   * Syncs happen only via an explicit operator operation
+    #     (kubectl -n argocd patch application east-west-stage4 --type merge \
+    #        -p '{"operation":{"sync":{"revision":"HEAD"}}}'),
+    #     first under audit mode (C2), then to turn enforcement on (C3).
+    #
+    # Contents: workloads/east-west-stage4/clusterwide-default-deny.yaml, the
+    # only policy here. It selects every Cilium endpoint and default-denies
+    # both directions; everything permitted comes from the non-enforcing
+    # prerequisites (workloads/egress-prereqs) and the per-namespace allows
+    # (workloads/egress), all delivered by separate automated Applications.
+    argocd.argoproj.io/sync-wave: "7"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: workloads/east-west-stage4
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  # NOTE: no syncPolicy.automated — deliberate, see header comment.
