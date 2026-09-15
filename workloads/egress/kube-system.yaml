@@ -1,0 +1,192 @@
+# Egress policy for `kube-system` — coredns, Hetzner cloud tools.
+# ============================================================================
+# Same shape as every file in `workloads/egress/`: a namespace-wide k8s
+# NetworkPolicy `default-deny-egress` plus allow policies per workload.
+#
+# `kube-system` is where the trap in the held Stage-4 header lived: hcloud-csi
+# NODE pods are NOT host-network (hostNetwork unset, dnsPolicy ClusterFirst,
+# pod IPs on every node), so the namespace-wide deny selects them and the
+# original claim that they "were not selected" was simply wrong. The allow
+# below covers them.
+#
+# Pod-network endpoints in this namespace (verified live):
+#   coredns (2)            hcloud-ccm (1)    hcloud-csi-controller (1)
+#   hcloud-csi-node (3)
+# Everything else here — the Cilium agent/operator/envoy, kube-apiserver,
+# kube-controller-manager, kube-scheduler — is host-network (hostNetwork:
+# true) and is NOT a Cilium endpoint, so it is never selected.
+#
+# Why coredns's egress is the most load-bearing rule in this file: coredns
+# gates its own readiness on having synced from the API server (F15). If API
+# egress is lost and coredns restarts, the pod goes NotReady, is removed from
+# the kube-dns Service, and ALL resolution fails cluster-wide. Its upstream
+# forward is the NODE resolver 169.254.116.108 — reserved identity `host` —
+# because it runs dnsPolicy: Default, i.e. it reads the node's resolv.conf and
+# the node is a Cilium host identity, never a pod. `world` would be both wrong
+# and far wider than what is observed.
+#
+# hcloud-ccm runs dnsPolicy: Default too, so its DNS also bypasses the proxy
+# and reaches 169.254.116.108 as `host`; and because its DNS never populates
+# Cilium's FQDN cache, its api.hetzner.cloud rule must be a pinned CIDR
+# (213.239.246.78/32), never a toFQDNs. hcloud-csi (ClusterFirst) does go
+# through the proxy, so it CAN use a toFQDNs rule. hcloud-ccm is a K8s cloud
+# controller with a service account (it reconciles node lifecycle through the
+# API) and therefore also gets the API entities — its API access is part of
+# the cluster's control plane, not an optional extra.
+# ============================================================================
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-coredns-egress
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s-app: kube-dns
+      io.kubernetes.pod.namespace: kube-system
+  egress:
+    # Upstream forwarding to the node resolver. dnsPolicy: Default, so this is
+    # the node itself — entity `host` — not a pod, not the proxy, not `world`.
+    - toEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Peer kube-dns pods (same service), so the replicas can forward to each
+    # other if ever configured to.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # The Kubernetes API. F15: readiness depends on the kubernetes plugin
+    # having synced; losing this and restarting coredns is cluster-wide DNS
+    # loss, not degradation.
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-hcloud-ccm-egress
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/instance: hcloud-ccm
+      io.kubernetes.pod.namespace: kube-system
+  egress:
+    # Node resolver (dnsPolicy: Default -> 169.254.116.108 = host identity).
+    - toEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # It is a K8s cloud controller with a service account (node lifecycle
+    # reconciliation runs through the API server).
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    # api.hetzner.cloud — pinned CIDR, because dnsPolicy: Default means its
+    # DNS never reaches the proxy and the FQDN cache stays empty. Verified
+    # live on 2026-09-15; if Hetzner ever changes this address, update from a
+    # fresh authoritative lookup before applying — never widen to world:443.
+    - toCIDR:
+        - "213.239.246.78/32"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-hcloud-csi-egress
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: hcloud-csi
+      io.kubernetes.pod.namespace: kube-system
+  egress:
+    # Cluster DNS via the proxy (ClusterFirst) — supplies the FQDN cache for
+    # the api.hetzner.cloud rule below.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    # api.hetzner.cloud via FQDN (ClusterFirst DOES populate the cache). Only
+    # the controller initiates this; the node pods (component: node) have no
+    # network egress of their own — their CSI channel is the unix socket in
+    # /run/csi/socket, not TCP.
+    - toFQDNs:
+        - matchName: api.hetzner.cloud
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
