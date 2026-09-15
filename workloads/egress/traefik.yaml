@@ -1,0 +1,100 @@
+# Egress policy for `traefik` (the ingress gateway).
+# ============================================================================
+# Same shape as every file in `workloads/egress/`: a namespace-wide k8s
+# NetworkPolicy `default-deny-egress` (podSelector {} + policyTypes ["Egress"])
+# plus one CiliumNetworkPolicy allow per workload. See the header comment in
+# `workloads/egress/cnpg-system.yaml` for why.
+#
+# Traefik is the single entry point for the public routes: the Cloudflare
+# tunnel forwards every hostname to `traefik.traefik.svc:80`, and Traefik
+# routes to exactly four backends, enumerated below from the live HTTPRoutes
+# (ports are POD ports, not Service ports):
+#
+#   whoami.hero-rehab.xyz        -> default/whoami                          :80
+#   umvc3-ranked.hero-rehab.xyz  -> default/umvc3                           :8080
+#   id.hero-rehab.xyz            -> default/pocket-id                       :1411
+#   spiffe.hero-rehab.xyz        -> spire-server/spiffe-oidc-discovery-...  :8080
+#
+# As an ingress controller Traefik also has to talk to the Kubernetes API: it
+# drives both the CRD provider (--providers.kubernetescrd) and the Gateway API
+# provider (--providers.kubernetesgateway), and the Gateway object it manages
+# lives in the `default` namespace. Without API egress it goes silent the
+# moment the deny lands.
+# ============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-traefik-egress
+  namespace: traefik
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      # Verified live: the traefik pod carries both
+      # app.kubernetes.io/name: traefik and
+      # app.kubernetes.io/instance: traefik-traefik.
+      app.kubernetes.io/name: traefik
+  egress:
+    # 1. Cluster DNS.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    # 2. The Kubernetes API (CRD + Gateway providers).
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    # 3. The four route backends. Namespace is expressed with
+    #    `io.kubernetes.pod.namespace` inside matchLabels -- the peer-selector
+    #    CRD field is `matchLabels`/`matchExpressions` ONLY; a `namespaces:`
+    #    sibling is rejected by strict decoding (verified on the live CRD), so
+    #    that form would make the whole rule silently disappear.
+    - toEndpoints:
+        - matchLabels:
+            app: whoami
+            io.kubernetes.pod.namespace: default
+        - matchLabels:
+            app: umvc3
+            io.kubernetes.pod.namespace: default
+        - matchLabels:
+            app.kubernetes.io/name: pocket-id
+            io.kubernetes.pod.namespace: default
+        - matchLabels:
+            app.kubernetes.io/name: spiffe-oidc-discovery-provider
+            io.kubernetes.pod.namespace: spire-server
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "8080"
+              protocol: TCP
+            - port: "1411"
+              protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: traefik
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
