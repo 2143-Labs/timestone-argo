@@ -1,0 +1,416 @@
+# Egress policy for `default` — the application namespace.
+# ============================================================================
+# Same shape as every file in `workloads/egress/`: a namespace-wide k8s
+# NetworkPolicy `default-deny-egress` plus one CiliumNetworkPolicy allow per
+# workload. See the header comment in `workloads/egress/cnpg-system.yaml`.
+#
+# This namespace holds the tunnel connector, the public workloads and both
+# databases, so this file has the largest allow set. Sources for every allow:
+#   * cloudflared        — base/cloudflared/configmap.yaml (tunnel routes to
+#                          traefik.traefik.svc:80 and tcp://kubernetes.default.svc:443;
+#                          edge discovery resolves regionN.v2.argotunnel.com).
+#   * umvc3              — base/apps/umvc3/deployment.yaml (STEAM_*, Discord),
+#                          plus its Temporal frontend and umvc3-db clients.
+#   * temporal           — argocd/wave-3/temporal.yaml (connectAddr timestone-rw:5432)
+#                          and the live CiliumIdentity named-port map
+#                          (frontend 7233/6933, history 7234/6934, matching
+#                          7235/6935, worker membership 6939, metrics 9090).
+#   * bootstrap Job      — base/temporal-bootstrap/namespace-job.yaml dials
+#                          temporal-frontend:7233; it carries
+#                          `app: temporal-namespace-bootstrap` and re-runs on
+#                          every sync (hook-delete-policy BeforeHookCreation),
+#                          so it must be allowed or every future sync fails.
+#
+# The Cloudflare tunnel rule is deliberately the union of two narrow rule
+# blocks (FQDN discovery primary, published /32s as fallback). A toFQDNs rule
+# cannot be combined with a toCIDR rule, so they are separate entries; both
+# target only Cloudflare's own Tunnel edge on 7844 TCP+UDP. The /32 fallback
+# exists because the tunnel is the operator's ONLY path into the cluster: if
+# the FQDN cache were ever cold (cilium agent restart) the tunnel would drop
+# while kubectl still worked. Both lists are taken verbatim from
+# https://developers.cloudflare.com/.../tunnel-with-firewall/
+# IPv6 is disabled on this cluster (enable-ipv6: false), so only the IPv4 /32s
+# appear, never the AAAA records.
+# ============================================================================
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cloudflared-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app: cloudflared
+  egress:
+    # 1. Cluster DNS — populates the FQDN cache for regionN.v2.argotunnel.com,
+    #    traefik.traefik.svc, kubernetes.default.svc.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    # 2. The Kubernetes API: the k8s.hero-rehab.xyz route terminates at
+    #    kubernetes.default.svc:443, and the API server is a hostNetwork static
+    #    pod that presents as one of these three reserved identities.
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    # 3. Traefik, the tunnel's ingress router (every public route forwards here).
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: traefik
+            io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+    # 4. The Cloudflare Tunnel edge. Primary rule: the exact matchName values
+    #    cloudflared itself resolves (verified in the live FQDN cache, which
+    #    shows region1.v2.argotunnel.com -> the ten 198.41.192.x addresses).
+    - toFQDNs:
+        - matchName: region1.v2.argotunnel.com
+        - matchName: region2.v2.argotunnel.com
+      toPorts:
+        - ports:
+            - port: "7844"
+              protocol: TCP
+            - port: "7844"
+              protocol: UDP
+    # 4b. Fallback: Cloudflare's PUBLISHED IPv4 /32s for both names, verbatim,
+    #     so the tunnel survives a cold FQDN cache. Never 198.41.128.0/17.
+    - toCIDR:
+        - "198.41.192.167/32"
+        - "198.41.192.67/32"
+        - "198.41.192.57/32"
+        - "198.41.192.107/32"
+        - "198.41.192.27/32"
+        - "198.41.192.7/32"
+        - "198.41.192.227/32"
+        - "198.41.192.47/32"
+        - "198.41.192.37/32"
+        - "198.41.192.77/32"
+        - "198.41.200.13/32"
+        - "198.41.200.193/32"
+        - "198.41.200.33/32"
+        - "198.41.200.233/32"
+        - "198.41.200.53/32"
+        - "198.41.200.63/32"
+        - "198.41.200.113/32"
+        - "198.41.200.73/32"
+        - "198.41.200.43/32"
+        - "198.41.200.23/32"
+      toPorts:
+        - ports:
+            - port: "7844"
+              protocol: TCP
+            - port: "7844"
+              protocol: UDP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-umvc3-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app: umvc3
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    # The Steam + Discord servers it integrates with. FQDN rules with pinned
+    # toPorts (the steam-lobby service is the lobby/ranked backend).
+    - toFQDNs:
+        - matchName: steamcommunity.com
+        - matchName: partner.steam-api.com
+        - matchName: api.steampowered.com
+        - matchName: discord.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Its database (same namespace: umvc3-db RWO cluster).
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: umvc3-db
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    # The Temporal frontend gRPC endpoint (TEMPORAL_ADDRESS).
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: temporal
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "7233"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-temporal-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: temporal
+      io.kubernetes.pod.namespace: default
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    # The internal service mesh (mirror of allow-temporal-mesh-and-clients).
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: temporal
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "7233"
+              protocol: TCP
+            - port: "7234"
+              protocol: TCP
+            - port: "7235"
+              protocol: TCP
+            - port: "6933"
+              protocol: TCP
+            - port: "6934"
+              protocol: TCP
+            - port: "6935"
+              protocol: TCP
+            - port: "6939"
+              protocol: TCP
+            - port: "9090"
+              protocol: TCP
+            - port: "7243"
+              protocol: TCP
+            - port: "8080"
+              protocol: TCP
+    # The persistence store (timestone-rw:5432).
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: timestone
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+---
+# The temporal namespace-bootstrap Job. It is transient (re-created on every
+# sync by hook-delete-policy BeforeHookCreation), so it never shows up in
+# steady-state inventories — but it MUST be allowed or every future Application
+# sync fails at the operator hook.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-temporal-bootstrap-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app: temporal-namespace-bootstrap
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: temporal
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "7233"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-timestone-instance-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: timestone
+      io.kubernetes.pod.namespace: default
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-umvc3-db-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: umvc3-db
+      io.kubernetes.pod.namespace: default
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-pocket-id-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: pocket-id
+      io.kubernetes.pod.namespace: default
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+---
+# whoami intentionally has NO allow here: it has no outbound needs, and its own
+# default-deny (Ingress+Egress) from the previous stage already covers both
+# directions for that pod.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
