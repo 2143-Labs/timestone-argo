@@ -3,18 +3,32 @@
 #
 # SHAPE — every namespace file in `workloads/egress/` follows this exactly:
 #
-#   `egress-deny-ns`   a namespace-scoped CiliumNetworkPolicy with
-#                      `endpointSelector: {}` and `egress: []`. It selects
-#                      every pod in the namespace and denies all egress.
-#   `allow-*-egress`   one CiliumNetworkPolicy per workload, carrying the
-#                      destinations that workload is justified in reaching.
+#   `default-deny-egress`  a Kubernetes NetworkPolicy with `podSelector: {}`
+#                          and `policyTypes: ["Egress"]`. It selects every pod
+#                          in the namespace and denies all egress.
+#   `allow-*-egress`       one CiliumNetworkPolicy per workload, carrying the
+#                          destinations that workload is justified in reaching.
+#
+# Why a Kubernetes NetworkPolicy for the deny rather than an empty-list
+# CiliumNetworkPolicy: Cilium rejects a CNP whose rule list is empty
+# ("rule must have at least one of Ingress, IngressDeny, Egress, EgressDeny"),
+# so `egress: []` — the form the held Stage-4 draft used — is not just
+# unenforced, it is INVALID, and the controller marks the policy Valid=False.
+# A k8s NetworkPolicy with `policyTypes: ["Egress"]` and no rules is the one
+# form that actually means "deny all egress". It is proven live by
+# `openbao-sync`'s `default-deny-egress`: the sync workload still reaches
+# OpenBao through its allow rules, and any other pod in that namespace times
+# out on egress. Each allow policy is a CiliumNetworkPolicy because the
+# destinations it names (FQDNs, reserved entities) cannot be expressed in the
+# plain k8s NetworkPolicy API; Cilium unions the two model families, which is
+# exactly how openbao-sync already works.
 #
 # Why the namespace-wide deny rather than a per-workload deny: a policy only
 # applies to an endpoint once something *selects* it, so a deny scoped to
 # today's pods leaves the next pod added to the namespace wide open. This is
 # the trap the Stage-4 design exists to close. It also makes host-network
-# questions moot — host-network pods are not Cilium endpoints, so
-# `endpointSelector: {}` never selects them.
+# questions moot — host-network pods are not Cilium endpoints, so a
+# `podSelector: {}` NetworkPolicy never selects them.
 #
 # Each allow policy repeats the DNS and API rules rather than relying on
 # `workloads/egress-prereqs/`. That is deliberate: it keeps every namespace
@@ -45,7 +59,7 @@ spec:
       # cloudnative-pg` and `app.kubernetes.io/instance: cnpg-operator`.
       app.kubernetes.io/name: cloudnative-pg
   egress:
-    # 1. Cluster DNS, via the L7 proxy so FQDN->IP is recorded.
+    # 1. Cluster DNS, via the L7 DNS proxy so FQDN->IP is recorded.
     - toEndpoints:
         - matchLabels:
             k8s-app: kube-dns
@@ -81,7 +95,8 @@ spec:
     #    land and then silently breaks reconciliation -- the clusters stay
     #    Running while nothing can manage them, which is the failure mode
     #    hardest to notice. The mirror-image ingress allow already exists in
-    #    `workloads/east-west/allow-to-cnpg.yaml`.
+    #    `workloads/east-west/allow-to-cnpg.yaml`, which also proves the
+    #    operator-->instance direction exists.
     #
     #    Both clusters carry `app.kubernetes.io/name: postgresql`, so they are
     #    separated by `cnpg.io/cluster` (labels confirmed from the live pods).
@@ -105,26 +120,23 @@ spec:
             - port: "9187"
               protocol: TCP
 ---
-# The namespace-wide egress default-deny. Everything above is additive to this;
-# anything not named above is dropped.
+# The namespace-wide egress default-deny, expressed as a Kubernetes
+# NetworkPolicy — the only form Cilium will accept for a bare deny (see the
+# header comment). Argo orders resources within the Application by sync-wave,
+# so this deny lands after the allows above.
 #
-# `ingress` is left alone: this policy declares no ingress rules and does not
-# set `enableDefaultDeny.ingress`, so it cannot change ingress behaviour. The
-# ingress side of this namespace is handled separately by
+# The ingress side of this namespace is handled separately by
 # `workloads/egress-prereqs/required-allows.yaml`
-# (`allow-apiserver-to-cnpg-webhook`), which the cluster-wide Stage-4 deny makes
-# mandatory: all nine CNPG admission webhooks are `failurePolicy: Fail`, so an
-# unreachable webhook blocks the API operation rather than being skipped.
-apiVersion: cilium.io/v2
-kind: CiliumNetworkPolicy
+# (`allow-apiserver-to-cnpg-webhook` on 9443 from the API-server entities),
+# which the cluster-wide Stage-4 deny makes mandatory: all nine CNPG admission
+# webhooks are `failurePolicy: Fail`.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: egress-deny-ns
+  name: default-deny-egress
   namespace: cnpg-system
   annotations:
     argocd.argoproj.io/sync-wave: "6"
 spec:
-  endpointSelector: {}
-  enableDefaultDeny:
-    ingress: false
-    egress: true
-  egress: []
+  podSelector: {}
+  policyTypes: ["Egress"]
