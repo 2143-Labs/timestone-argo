@@ -59,14 +59,6 @@ spec:
           hostRoot: /sys/fs/cgroup
         hubble:
           enabled: false
-        # TEMP (Stage-4 validation, C1-C3 window ONLY — commit-reverted in
-        # C3): daemon-wide Policy Audit Mode. Renders the agent's
-        # `policy-audit-mode` flag. While on, NO L3/L4 policy is enforced and
-        # every would-be drop is logged as a policy-verdict notification
-        # instead — including the Stage 1-3 ingress deny that currently
-        # protects the public routes. The window is kept short and explicit;
-        # audit mode is never a production end state.
-        policyAuditMode: true
         # Keep the operator available while one of the three schedulable
         # control-plane nodes is drained or upgraded.
         operator:
