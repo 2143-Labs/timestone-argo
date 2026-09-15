@@ -57,10 +57,21 @@ spec:
             failureThreshold: 3
             periodSeconds: 10
             timeoutSeconds: 5
+          # PocketID's entrypoint (/app/docker/entrypoint.sh) runs as root to
+          # create the app user, chown the data volume, then drop to uid 1000
+          # via su-exec. That path needs CAP_CHOWN (chown /app/data),
+          # CAP_SETGID (setgroups) and CAP_SETUID (su-exec); with everything
+          # dropped the container crash-loops on "chown: /app/data: Operation
+          # not permitted" and "su-exec: setgroups(1000): Operation not
+          # permitted". The root filesystem is deliberately left writable
+          # because that same entrypoint appends the user to /etc/passwd and
+          # /etc/group; everything else stays dropped and privilege escalation
+          # stays disabled.
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+              add: ["CHOWN", "SETUID", "SETGID"]
           resources:
             requests:
               cpu: 100m
