@@ -1,0 +1,231 @@
+# ============================================================================
+# EGRESS PREREQUISITES — universal allows that cannot live in a per-namespace
+# policy.
+# ============================================================================
+#
+# WHY THIS FILE IS SEPARATE FROM THE STAGE-4 DENY
+#
+# `workloads/east-west-stage4/clusterwide-default-deny.yaml` selects every
+# Cilium-managed endpoint and denies both directions. A per-namespace policy is
+# scoped to that namespace, so it cannot express rules that must apply to *every*
+# pod in the cluster. These six policies are those rules. They are installed
+# FIRST (Phase A) and are deliberately NON-ENFORCING, so that installing them
+# changes nothing until the residual deny lands in Phase C.
+#
+# WHAT MAKES THEM NON-ENFORCING
+#
+# Every object below sets `enableDefaultDeny: {ingress: false, egress: false}`.
+# Without that, a policy that merely *allows* something would also switch its
+# selected endpoints into default-deny mode — which is the exact opposite of the
+# intent here. Verified against the live CRD schema, which documents the field:
+# "If not specified, the default is true for each traffic direction that has
+# rules". So each of these would silently become a cluster-wide deny on its own
+# without the explicit false. With it, unmatched traffic keeps its previous
+# (permit-by-default) treatment.
+#
+# WHY EACH RULE EXISTS
+#
+#   * DNS egress + DNS ingress are mandatory the moment the cluster-wide deny
+#     lands: one keeps coredns reachable as a resolver, the other lets every pod
+#     reach coredns. Omit either and name resolution fails cluster-wide at once.
+#   * The API rule is universal: every component presenting a service-account
+#     token talks to kubernetes.default.svc. The API server here is a hostNetwork
+#     static pod, so it presents as the kube-apiserver entity or as
+#     host/remote-node — all three are listed and strictly port-scoped.
+#   * coredns runs with `dnsPolicy: Default`, so it reads the NODE's resolv.conf
+#     (`nameserver 169.254.116.108`) and forwards every cache miss there. That
+#     address is the node itself (Cilium reserved identity 1, `host`), never
+#     `world`, so the upstream rule must name the entity and must NOT be a CIDR.
+#   * The two webhook rules exist because the Stage-4 deny covers ingress as well
+#     as egress. Every admission webhook in this cluster uses
+#     `failurePolicy: Fail`, so an unreachable webhook makes the API operation
+#     fail rather than being skipped. Without these, the nine CNPG webhooks would
+#     be unreachable and `Cluster`/`Backup`/`Database`/`ScheduledBackup`/
+#     `Pooler` objects would become unpatchable by the very tool that manages the
+#     policy — a GitOps deadlock.
+#
+# SHAPE NOTES (verified against the live ciliumnetworkpolicies CRD schema):
+#   toEndpoints/fromEndpoints take LabelSelector items — `matchLabels` sits
+#   directly on the item, with no `selectors:` wrapper — and the labels are the
+#   plain Kubernetes keys, which Cilium maps to its internal `k8s:<key>` form.
+#   Namespace is the special key `io.kubernetes.pod.namespace`.
+#   `rules.dns` is a list of `{matchPattern: ...}` / `{matchName: ...}` objects.
+#
+# NOTE this deliberately grants NO `world` egress. Internet access stays
+# per-workload, via FQDN rules in the per-namespace policies.
+---
+# Every pod -> cluster DNS, through the L7 DNS proxy.
+#
+# The `rules.dns` block is what makes Cilium record the FQDN->IP mappings that
+# every `toFQDNs` rule in the per-namespace policies depends on. The pattern is
+# deliberately `"*"`: this cluster sets `tofqdns-dns-reject-response-code:
+# refused`, and musl/Alpine clients (curlimages/curl, traefik/whoami) abandon a
+# name once the `<name>.<ns>.svc.cluster.local` search-list variant is refused,
+# so a narrower pattern breaks them outright. Narrower patterns would strengthen
+# the policy by rejecting arbitrary QNAMEs at the proxy; that trade-off is
+# documented in the plan rather than being silently deferred.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-dns-egress-clusterwide
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    ingress: false
+    egress: false
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+---
+# Cluster DNS -> every pod (coredns must stay reachable as a resolver).
+#
+# The port-53 rule carries no `fromEndpoints`, which means "from anywhere" —
+# that is intentional and complete. The 8080/8181 rule in the original draft is
+# deleted: it targeted kube-system pods on coredns's health/metrics ports, which
+# is not how coredns is probed. Kubelet probes are permitted implicitly by
+# Cilium (`enable-health-checking: true`), which is why three other namespaces
+# already run under a default-deny-ingress with probes and zero restarts.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-dns-ingress-clusterwide
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s-app: kube-dns
+      io.kubernetes.pod.namespace: kube-system
+  enableDefaultDeny:
+    ingress: false
+    egress: false
+  ingress:
+    - toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+---
+# Every pod -> the Kubernetes API. Port-scoped; this reaches nothing else on a
+# node. 7445 is Talos's KubePrism endpoint on the node loopback; it is included
+# so that a pod configured to use it keeps working, and is harmless because it
+# is only reachable from the node itself.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-apiserver-egress-clusterwide
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    ingress: false
+    egress: false
+  egress:
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+            - port: "7445"
+              protocol: TCP
+---
+# coredns -> its own upstream resolver.
+#
+# coredns uses `dnsPolicy: Default`, so its DNS never traverses Cilium's DNS
+# proxy and its upstream is the node-local resolver 169.254.116.108. That
+# address is the node itself (reserved identity `host`), not `world`, so this
+# rule names entities rather than a CIDR. Without it, every cache miss dies and
+# the cluster loses external name resolution the moment the deny lands.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-coredns-upstream-egress
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s-app: kube-dns
+      io.kubernetes.pod.namespace: kube-system
+  enableDefaultDeny:
+    ingress: false
+    egress: false
+  egress:
+    - toEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+---
+# kube-apiserver -> the nine CNPG admission webhooks.
+#
+# `cnpg-webhook-service:443` targets the operator pod's `webhook-server` port
+# 9443. The API server is a static pod on all three nodes, so a call can present
+# as `host` (same node), `kube-apiserver` or `remote-node`; all three are listed.
+# All nine webhooks use `failurePolicy: Fail`.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-apiserver-to-cnpg-webhook
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+      io.kubernetes.pod.namespace: cnpg-system
+  enableDefaultDeny:
+    ingress: false
+    egress: false
+  ingress:
+    - fromEntities:
+        - host
+        - kube-apiserver
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
+---
+# kube-apiserver -> the two SPIRE admission webhooks.
+#
+# The existing in-namespace policy only lists `fromEntities: [host]`, which is
+# incomplete for the same reason as above: a webhook call served from a different
+# node presents as `kube-apiserver` (reserved identity 7). Both webhooks use
+# `failurePolicy: Fail`, so SPIRE ClusterSPIFFEID/ClusterFederatedTrustDomain
+# mutations would fail with the deny in place.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-apiserver-to-spire-webhook
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: server
+      io.kubernetes.pod.namespace: spire-server
+  enableDefaultDeny:
+    ingress: false
+    egress: false
+  ingress:
+    - fromEntities:
+        - host
+        - kube-apiserver
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
