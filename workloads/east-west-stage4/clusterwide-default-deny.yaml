@@ -1,0 +1,104 @@
+# ============================================================================
+# STAGE 4 — HELD. THIS FILE IS NOT APPLIED BY ANYTHING.
+# ============================================================================
+#
+# No Application points at `workloads/east-west-stage4/`, so this object exists
+# in Git for review only. (The root Application recurses `argocd/` with
+# `directory.recurse: true`, which is why its children can be organised as
+# `wave-N/`; that recursion does not reach `workloads/`.)
+#
+# TO ENABLE (do not do this casually — read the whole file first):
+#   1. Confirm `egress-prereqs` and `egress` are already Synced and Healthy, and
+#      that every namespace carrying egress has its policy in `workloads/egress/`.
+#   2. Prove it in audit mode first. Cilium `policyAuditMode: true` is the only
+#      way to get authoritative "would deny" verdicts; `enableDefaultDeny: false`
+#      merely makes a policy non-enforcing and produces no verdicts at all.
+#   3. Create argocd/wave-7/east-west-stage4.yaml pointing at this directory,
+#      WITHOUT a syncPolicy.automated block. Manual sync is the safety boundary:
+#      it means a hand-deletion of this policy is not reverted by self-heal.
+#   4. Watch: kubectl -n argocd get applications, and
+#      kubectl -n kube-system exec ds/cilium -- cilium-dbg monitor -t drop
+#
+# RECOVERY IF IT LOCKS THE CLUSTER (the tunnel is inside this policy):
+#   The operator's only path is the Cloudflare Access tunnel to
+#   kubernetes.default.svc:443. If DNS or the API path breaks, the cluster
+#   becomes unreachable over the tunnel and you need the firewall break-glass:
+#     cd /home/john/repos/timestone-tofu/hetzner
+#     tofu apply -var talos_bootstrap_access=true      # reopens 50000 + 6443
+#     talosctl kubeconfig                              # re-derive admin kubeconfig
+#     kubectl delete ciliumclusterwidenetworkpolicy default-deny-cluster
+#     tofu apply -var talos_bootstrap_access=false
+#   (Never read .runtime/rebuild/* for this — re-derive with talosctl.)
+#
+#   DELETE ONLY `default-deny-cluster`. It is the single enforcing object in this
+#   change. Every CiliumClusterwideNetworkPolicy in `workloads/egress-prereqs/`
+#   sets `enableDefaultDeny: {ingress: false, egress: false}`, and the live CRD
+#   documents that a policy only switches its selected endpoints into
+#   default-deny mode when that field is true (or unset, where it defaults to
+#   true per direction carrying rules). So the prerequisites merely *permit*
+#   traffic; with this one object gone the endpoints return to permit-by-default.
+#   There is no second policy to hunt down, and nothing else needs deleting.
+#
+# WHY THIS IS THE DANGEROUS ONE
+#   `endpointSelector: {}` selects every Cilium-managed endpoint in the cluster,
+#   so both directions become deny-by-default everywhere at once. Crucially that
+#   includes kube-system: coredns, hcloud-cloud-controller-manager and
+#   hcloud-csi-controller, which are ordinary pod-network endpoints. If the DNS
+#   and API rules are absent or wrong, every pod loses name resolution
+#   simultaneously — which looks like a total outage, not a policy error.
+#
+#   Host-network pods are NOT selected: they carry no Cilium endpoint, so policy
+#   never applies to them and they keep reserved-identity semantics. The
+#   host-network pods in this cluster are the Cilium agent and operator, the
+#   envoy daemonset, the three Talos control-plane static pods (kube-apiserver,
+#   kube-controller-manager, kube-scheduler) and spire-agent.
+#
+#   hcloud-csi-node is NOT one of them. It is a pod-network endpoint: it has
+#   `hostNetwork` unset and `dnsPolicy: ClusterFirst`, and it holds a pod IP on
+#   each node. It IS selected by this policy and it has no egress rule of its own
+#   in the held draft, so its own egress is supplied by
+#   `workloads/egress/kube-system.yaml`. The same is true of spire-agent's peer
+#   workloads. Do not assume "daemonset" implies "host-network" here.
+#
+#   Reserved identities (host, remote-node, health, init, world, cluster,
+#   kube-apiserver) are never selected by a pod-level policy either.
+#
+# PREREQUISITES (all must already be Synced + Healthy):
+#   * stages 1-3 applied: workloads/east-west/*, workloads/openbao-sync/*,
+#     base/apps/whoami/networkpolicy.yaml
+#   * workloads/egress-prereqs/required-allows.yaml — the six NON-ENFORCING
+#     cluster-wide allows that no per-namespace policy can express:
+#       - every pod -> cluster DNS, and cluster DNS -> every pod
+#       - every pod -> the Kubernetes API (entities kube-apiserver/host/
+#         remote-node, ports 443/6443/7445)
+#       - coredns -> its upstream resolver. coredns runs `dnsPolicy: Default`,
+#         so it reads the node's resolv.conf and forwards cache misses to
+#         169.254.116.108 — the node itself, i.e. reserved identity `host`. This
+#         must be expressed as `host`/`remote-node` on port 53, never as
+#         `world:53`; a world rule would be both wrong and far wider than the
+#         traffic actually observed.
+#       - kube-apiserver -> the nine CNPG and two SPIRE admission webhooks on
+#         9443. Every webhook in this cluster is `failurePolicy: Fail`, so an
+#         unreachable webhook blocks the API operation instead of being skipped.
+#   * workloads/egress/ — one policy per namespace that makes outbound calls:
+#     cnpg-system, traefik, argocd, default, kube-system, spire-server,
+#     spire-system. openbao-sync's already exists in workloads/openbao-sync/.
+#     Each is independently enforcing, so a missing entry here is a namespace
+#     that this policy takes down rather than merely restricts.
+#   * a decision on `world` egress. This file intentionally grants NO `world`
+#     access: internet reachability is per-workload (FQDN rules), not global.
+#     If any workload unexpectedly needs the internet after this lands, the
+#     symptom is a silent connection timeout, not a crash.
+# ============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: default-deny-cluster
+spec:
+  endpointSelector: {}
+  # Pure deny in both directions. Every permitted flow must come from an
+  # explicitly authored policy (per-namespace NetworkPolicy/CNP, or the
+  # companion allow file). Cilium still permits health-check traffic
+  # implicitly, so kubelet probes keep working.
+  ingress: []
+  egress: []
