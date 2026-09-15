@@ -1,0 +1,130 @@
+# Egress policy for `cnpg-system` (the CloudNativePG operator).
+# ============================================================================
+#
+# SHAPE — every namespace file in `workloads/egress/` follows this exactly:
+#
+#   `egress-deny-ns`   a namespace-scoped CiliumNetworkPolicy with
+#                      `endpointSelector: {}` and `egress: []`. It selects
+#                      every pod in the namespace and denies all egress.
+#   `allow-*-egress`   one CiliumNetworkPolicy per workload, carrying the
+#                      destinations that workload is justified in reaching.
+#
+# Why the namespace-wide deny rather than a per-workload deny: a policy only
+# applies to an endpoint once something *selects* it, so a deny scoped to
+# today's pods leaves the next pod added to the namespace wide open. This is
+# the trap the Stage-4 design exists to close. It also makes host-network
+# questions moot — host-network pods are not Cilium endpoints, so
+# `endpointSelector: {}` never selects them.
+#
+# Each allow policy repeats the DNS and API rules rather than relying on
+# `workloads/egress-prereqs/`. That is deliberate: it keeps every namespace
+# independently revertible, and it keeps the failure mode local. Without the
+# DNS rule in particular the `toFQDNs` rules would match nothing (Cilium only
+# learns FQDN->IP from observed DNS answers, and only when an L7 `rules.dns`
+# block puts the DNS proxy in the path) — so a policy that "allows
+# github.com" would silently allow nothing at all.
+#
+# `rules.dns.matchPattern: "*"` is used rather than a narrow pattern because
+# this cluster sets `tofqdns-dns-reject-response-code: refused`; musl/Alpine
+# clients abandon a name once the `<name>.<ns>.svc.cluster.local` search-list
+# variant is refused. See the plan for that residual trade-off.
+# ============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cnpg-operator-egress
+  namespace: cnpg-system
+  annotations:
+    # Allows land before the deny: Argo orders resources within one sync by
+    # this annotation, so there is no window where the deny exists alone.
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      # Verified live: the operator pod carries both `app.kubernetes.io/name:
+      # cloudnative-pg` and `app.kubernetes.io/instance: cnpg-operator`.
+      app.kubernetes.io/name: cloudnative-pg
+  egress:
+    # 1. Cluster DNS, via the L7 proxy so FQDN->IP is recorded.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    # 2. The Kubernetes API. The operator is a controller: without this it
+    #    stops reconciling and the clusters silently drift out of management.
+    #    Port-scoped to the API server, which is a hostNetwork static pod and
+    #    so presents as one of these three reserved identities.
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    # 3. The managed PostgreSQL instances.
+    #
+    #    NOT optional. The operator drives every instance over the network:
+    #    5432 (SQL), 8000 (instance-manager API, used for switchover and
+    #    promotion) and 9187 (metrics/replication). Omitting this lets the deny
+    #    land and then silently breaks reconciliation -- the clusters stay
+    #    Running while nothing can manage them, which is the failure mode
+    #    hardest to notice. The mirror-image ingress allow already exists in
+    #    `workloads/east-west/allow-to-cnpg.yaml`.
+    #
+    #    Both clusters carry `app.kubernetes.io/name: postgresql`, so they are
+    #    separated by `cnpg.io/cluster` (labels confirmed from the live pods).
+    #    Two plain `matchLabels` entries are used instead of one
+    #    `matchExpressions` entry on purpose: plain labels are the shape proven
+    #    to translate, and a selector Cilium cannot express produces a silently
+    #    inert policy.
+    - toEndpoints:
+        - matchLabels:
+            cnpg.io/cluster: timestone
+            io.kubernetes.pod.namespace: default
+        - matchLabels:
+            cnpg.io/cluster: umvc3-db
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+            - port: "8000"
+              protocol: TCP
+            - port: "9187"
+              protocol: TCP
+---
+# The namespace-wide egress default-deny. Everything above is additive to this;
+# anything not named above is dropped.
+#
+# `ingress` is left alone: this policy declares no ingress rules and does not
+# set `enableDefaultDeny.ingress`, so it cannot change ingress behaviour. The
+# ingress side of this namespace is handled separately by
+# `workloads/egress-prereqs/required-allows.yaml`
+# (`allow-apiserver-to-cnpg-webhook`), which the cluster-wide Stage-4 deny makes
+# mandatory: all nine CNPG admission webhooks are `failurePolicy: Fail`, so an
+# unreachable webhook blocks the API operation rather than being skipped.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: egress-deny-ns
+  namespace: cnpg-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    ingress: false
+    egress: true
+  egress: []

@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: egress
+  namespace: argocd
+  annotations:
+    # Wave 7: the per-namespace egress policies. These are independently
+    # ENFORCING from the moment they land -- each namespace file carries its
+    # own `egress-deny-ns` plus the allows that keep that namespace working --
+    # so this directory is the point at which egress actually becomes
+    # restricted, namespace by namespace.
+    #
+    # It is separate from `egress-prereqs` because the two have different risk
+    # profiles and different rollback stories: the prerequisites are
+    # non-enforcing and can be left in place, while any single namespace file
+    # here can be reverted on its own.
+    argocd.argoproj.io/sync-wave: "7"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: workloads/egress
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
