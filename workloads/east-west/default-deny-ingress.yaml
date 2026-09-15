@@ -1,0 +1,33 @@
+# The namespace-wide ingress default-deny for `default`.
+#
+# Applied at sync-wave 6; every allow it depends on is authored at wave 5
+# (allow-traefik-to-umvc3, allow-temporal-mesh-and-clients, allow-to-cnpg, and
+# whoami's own allow from the previous stage). Argo orders resources inside one
+# sync by that annotation, so the allows exist before this deny lands.
+#
+# INGRESS ONLY, deliberately. `default` also hosts the tunnel connector and the
+# application workloads, and their egress (Cloudflare edge, Steam Web API,
+# Temporal gRPC, Postgres) is not yet enumerated. Restricting egress here would
+# disable umvc3's Steam integration and the tunnel at the same time — that
+# belongs to the cluster-wide stage, where every destination is listed
+# explicitly and the rollback path is understood.
+#
+# Nothing else is expected to reach these pods:
+#   * kubelet liveness/readiness probes -> implicitly permitted by Cilium
+#     (enable-health-checking: true); proven by spire-system, spire-server and
+#     openbao-sync already running default-deny-ingress with probes and zero
+#     restarts.
+#   * cloudflared is a client only — it dials OUT to the Cloudflare edge and to
+#     traefik.traefik.svc, so it needs no ingress allow.
+#   * the API server is a hostNetwork static pod and is not a Cilium endpoint,
+#     so pod ingress policy does not apply to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]

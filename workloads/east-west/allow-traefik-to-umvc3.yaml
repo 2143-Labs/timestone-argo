@@ -1,0 +1,39 @@
+# Traefik is the only ingress to this namespace's HTTP workloads. The umvc3
+# route lives in `default` (base/apps/umvc3/route.yaml) and the Gateway listener
+# allows namespace `default`, so Traefik reaches the pod directly.
+#
+# Deliberately a single `matchLabels` selector, not `matchExpressions`. These
+# policies are translated from the Kubernetes NetworkPolicy API into Cilium's
+# model, and a selector Cilium cannot translate becomes a policy that is
+# silently inert — the deny would land while the allow did nothing, taking
+# umvc3 offline. `whoami` is not listed here because it already has its own
+# equally simple allow from the previous stage (base/apps/whoami/
+# networkpolicy.yaml); Cilium policies are additive, so splitting them this way
+# keeps each stage independently revertible without duplicating anything.
+#
+# Port 8080 is the pod's port, not the Service port: base/apps/umvc3/
+# service.yaml maps 80 -> targetPort http (8080), and Gateway API backends are
+# resolved to pod endpoints.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-to-umvc3
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app: umvc3
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080
+  policyTypes: ["Ingress"]

@@ -1,0 +1,80 @@
+# Temporal's internal service mesh, plus its two known clients.
+#
+# Temporal is a multi-binary system: frontend/history/matching/worker each serve
+# gRPC on their own port and additionally talk to each other on membership
+# ports. All of them carry `app.kubernetes.io/name: temporal`, so a single
+# selector covers the mesh. Ports are from the live CiliumIdentity named-port
+# map:
+#   frontend  rpc=7233 membership=6933 metrics=9090 http=7243
+#   history   rpc=7234 membership=6934 metrics=9090
+#   matching  rpc=7235 membership=6935 metrics=9090
+#   worker    membership=6939 metrics=9090
+#   web       http=8080
+#
+# Two clients are NOT temporal-labelled and would otherwise be blocked the
+# moment the namespace-wide deny lands:
+#   * umvc3    — base/apps/umvc3/deployment.yaml:90 TEMPORAL_ADDRESS=
+#                http://temporal-frontend:7233 (gRPC to the frontend).
+#   * the temporal-bootstrap Sync hook Job — base/temporal-bootstrap/
+#                namespace-job.yaml:31 dials temporal-frontend:7233 and carries
+#                the pod label `app: temporal-namespace-bootstrap`. It re-runs
+#                on every sync (hook-delete-policy BeforeHookCreation), so it
+#                must be allowed or every future sync fails at the hook.
+#
+# `podSelector` without a `namespaceSelector` means "pods in this policy's own
+# namespace", which is exactly the temporal mesh.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-temporal-mesh-and-clients
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: temporal
+  ingress:
+    # The mesh itself.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: temporal
+      ports:
+        - protocol: TCP
+          port: 7233
+        - protocol: TCP
+          port: 7234
+        - protocol: TCP
+          port: 7235
+        - protocol: TCP
+          port: 6933
+        - protocol: TCP
+          port: 6934
+        - protocol: TCP
+          port: 6935
+        - protocol: TCP
+          port: 6939
+        - protocol: TCP
+          port: 9090
+        - protocol: TCP
+          port: 7243
+        - protocol: TCP
+          port: 8080
+    # umvc3 -> frontend.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: umvc3
+      ports:
+        - protocol: TCP
+          port: 7233
+    # bootstrap hook Job -> frontend.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: temporal-namespace-bootstrap
+      ports:
+        - protocol: TCP
+          port: 7233
+  policyTypes: ["Ingress"]

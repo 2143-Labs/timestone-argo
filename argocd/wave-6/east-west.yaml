@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: east-west
+  namespace: argocd
+  annotations:
+    # Wave 6: last. Every policy in this directory constrains pods that the
+    # earlier waves create (Temporal at 3, the CNPG clusters at 2, whoami at 4,
+    # umvc3 and the connector at 5), and the namespace-wide deny additionally
+    # depends on the allows inside this same Application — those are ordered
+    # against each other by their own sync-wave annotations (5 allows, 6 deny).
+    argocd.argoproj.io/sync-wave: "6"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: workloads/east-west
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

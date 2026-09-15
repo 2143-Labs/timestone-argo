@@ -1,0 +1,86 @@
+# CNPG clients and the CNPG operator.
+#
+# Both clusters carry `app.kubernetes.io/name: postgresql`, so a selector on that
+# label alone would conflate them — they are separated by `cnpg.io/cluster`
+# (labels confirmed from the live CiliumIdentity objects).
+#
+# Client mapping, from the workloads themselves:
+#   timestone  <- Temporal. argocd/wave-3/temporal.yaml:35,48 sets
+#                 connectAddr: "timestone-rw:5432" for both the default and the
+#                 visibility store.
+#   umvc3-db   <- umvc3. base/apps/umvc3/deployment.yaml:46-50 builds
+#                 DATABASE_URL from the `umvc3-db-app` Secret, i.e. the
+#                 umvc3-db-rw service.
+#
+# The operator rule is not optional. cloudnative-pg runs in `cnpg-system` and
+# manages every instance over the network: 5432 (SQL), 8000 (instance-manager
+# health/switchover API) and 9187 (replication/metrics). Omitting it lets the
+# deny land and then silently breaks reconciliation — the cluster would stay
+# Running while the operator could no longer manage it, which is the failure
+# mode hardest to notice.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-temporal-to-timestone
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: timestone
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: temporal
+      ports:
+        - protocol: TCP
+          port: 5432
+  policyTypes: ["Ingress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-umvc3-to-umvc3-db
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: umvc3-db
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: umvc3
+      ports:
+        - protocol: TCP
+          port: 5432
+  policyTypes: ["Ingress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cnpg-operator
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - protocol: TCP
+          port: 5432   # SQL
+        - protocol: TCP
+          port: 8000   # instance-manager API (also the probe port)
+        - protocol: TCP
+          port: 9187   # replication / metrics
+  policyTypes: ["Ingress"]
