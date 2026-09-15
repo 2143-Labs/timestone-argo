@@ -1,6 +1,7 @@
 # The sync account writes one approved value to two narrowly-scoped Secrets.
 # Creates cannot be restricted by resourceName, so each Role's create grant is
-# namespace-scoped; get/update stay pinned and no list/watch/delete is granted.
+# namespace-scoped; the write grant is `patch` pinned to one resourceName. A
+# merge patch needs neither `get` nor `update`, so neither is granted.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -10,7 +11,7 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["openbao-steam"]
-    verbs: ["get", "update"]
+    verbs: ["patch"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create"]
@@ -38,7 +39,7 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["umvc3-runtime"]
-    verbs: ["get", "update"]
+    verbs: ["patch"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create"]

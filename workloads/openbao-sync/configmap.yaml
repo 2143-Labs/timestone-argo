@@ -71,39 +71,33 @@ data:
       TOKEN=$(cat "$SA_DIR/token")
       B64=$(printf '%s' "$SECRET_VALUE" | base64 | tr -d '\r\n')
 
-      LOOKUP=$(curl -s --cacert "$SA_DIR/ca.crt" \
-        -H "Authorization: Bearer $TOKEN" -w '\n%{http_code}' "$SECRET_URL")
-      GET_CODE=$(printf '%s' "$LOOKUP" | tail -n1)
-      EXISTING=$(printf '%s' "$LOOKUP" | sed '$d')
-      case "$GET_CODE" in
-        200)
-          RESOURCE_VERSION=$(printf '%s' "$EXISTING" | sed -n 's/.*"resourceVersion":"\([^"]*\)".*/\1/p')
-          if [ -z "$RESOURCE_VERSION" ]; then
-            log "secret lookup returned no resourceVersion for $SECRET_NS/$SECRET_NAME"
-            return 1
-          fi
-          METHOD=PUT
-          URL=$SECRET_URL
-          VERSION_FIELD=",\"resourceVersion\":\"$RESOURCE_VERSION\""
-          ;;
-        404)
-          METHOD=POST
-          URL=$COLLECTION_URL
-          VERSION_FIELD=
-          ;;
-        *)
-          log "secret lookup failed for $SECRET_NS/$SECRET_NAME (http $GET_CODE)"
-          return 1
-          ;;
-      esac
-
-      BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\"$VERSION_FIELD,\"labels\":{\"app.kubernetes.io/managed-by\":\"openbao-secret-sync\"}},\"type\":\"Opaque\",\"data\":{\"$SECRET_KEY\":\"$B64\"}}"
-      CODE=$(curl -s -o /dev/null -w '%{http_code}' -X "$METHOD" \
+      # Merge patch, not read-modify-write. A PUT requires the Secret's current
+      # resourceVersion, which this previously parsed out of the GET response
+      # with a single-line sed match -- but the API server returns pretty-printed
+      # multi-line JSON, so that match never fired and every write was skipped
+      # with "returned no resourceVersion". A merge patch needs no
+      # resourceVersion, cannot lose a concurrent update, and merges into the
+      # existing data map rather than replacing the whole object.
+      PATCH_BODY="{\"data\":{\"$SECRET_KEY\":\"$B64\"}}"
+      CODE=$(curl -s -o /dev/null -w '%{http_code}' -X PATCH \
         --cacert "$SA_DIR/ca.crt" \
         -H "Authorization: Bearer $TOKEN" \
-        -H 'Content-Type: application/json' \
-        --data "$BODY" \
-        "$URL")
+        -H 'Content-Type: application/merge-patch+json' \
+        --data "$PATCH_BODY" \
+        "$SECRET_URL")
+
+      # A merge patch against an absent object is refused with 404 rather than
+      # creating it, so creation still needs a POST.
+      if [ "$CODE" = "404" ]; then
+        CREATE_BODY="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$SECRET_NAME\",\"namespace\":\"$SECRET_NS\",\"labels\":{\"app.kubernetes.io/managed-by\":\"openbao-secret-sync\"}},\"type\":\"Opaque\",\"data\":{\"$SECRET_KEY\":\"$B64\"}}"
+        CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+          --cacert "$SA_DIR/ca.crt" \
+          -H "Authorization: Bearer $TOKEN" \
+          -H 'Content-Type: application/json' \
+          --data "$CREATE_BODY" \
+          "$COLLECTION_URL")
+      fi
+
       case "$CODE" in
         200|201)
           log "synced $SECRET_NS/$SECRET_NAME key $SECRET_KEY (http $CODE)"
