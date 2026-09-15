@@ -1,0 +1,58 @@
+# `whoami` is the one PUBLIC, unauthenticated endpoint in the cluster: the
+# Cloudflare tunnel forwards whoami.hero-rehab.xyz to Traefik, which routes here.
+# Everything it legitimately needs is inbound from Traefik on port 80, so both
+# directions are denied for THIS POD ONLY and exactly that one flow is
+# re-permitted.
+#
+# Scope note: the deny selects `app: whoami`, not `{}`. A `{}` selector would
+# deny ingress and egress for every pod in `default` — including Temporal,
+# both CNPG clusters and the tunnel connector — which is Stage 3's job and would
+# be catastrophic as a side effect of isolating one smoke-test endpoint.
+#
+# Two objects, ordered by sync-wave so the allow exists before the deny:
+#   5 -> allow-traefik-to-whoami
+#   6 -> default-deny
+# Argo orders resources within one sync by that annotation, so there is no
+# window where the deny exists without its allow.
+#
+# Egress needs no allow rule: traefik/whoami only answers requests; it never
+# calls out. The kubelet probes on port 80 are unaffected either way — Cilium
+# permits health-check traffic implicitly (enable-health-checking: true),
+# proven by three other namespaces already running default-deny-ingress with
+# probes and zero restarts.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-to-whoami
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app: whoami
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 80
+  policyTypes: ["Ingress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector:
+    matchLabels:
+      app: whoami
+  policyTypes: ["Ingress", "Egress"]
