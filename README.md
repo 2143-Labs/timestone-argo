@@ -32,6 +32,7 @@ argocd/
                     #    2 cnpg-cluster (base/cnpg)
                     #    3 temporal (helm 1.5.0)
                     #    4 gateway (base/gateway) + whoami (base/apps/whoami)
+                    #      + temporal-bootstrap + pocket-id (base/apps/pocket-id)
                     #    5 cloudflared (base/cloudflared)
 base/               # shared plain YAML per component (dir = one ArgoCD child app)
   cnpg/cluster.yaml             # CNPG Cluster `timestone` (single instance, db node)
@@ -89,6 +90,7 @@ clusters/           # per-environment values + the values contract (see its READ
 | CNPG postgres | ghcr.io/cloudnative-pg/postgresql:16.15 |
 | Temporal chart | 1.5.0 |
 | whoami | traefik/whoami:v1.10.4 |
+| Pocket-ID | ghcr.io/pocket-id/pocket-id:v2.14.0 |
 | cloudflared | 2026.8.3 |
 
 ## CI & multi-user

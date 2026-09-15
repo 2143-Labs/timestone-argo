@@ -1,0 +1,20 @@
+# SQLite database, uploads and the encryption-key-wrapped state for the Pocket-ID
+# IdP. Retained across application rollback the same way the ranked database is
+# (see base/cnpg/umvc3-cluster.yaml): the Application carries the
+# resources-finalizer, so without this annotation a revert of the Application
+# would cascade-delete this volume and destroy every registered client and the
+# admin account.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pocket-id-data
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: hcloud-volumes

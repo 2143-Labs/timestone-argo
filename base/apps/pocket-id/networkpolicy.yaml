@@ -1,0 +1,42 @@
+# Pocket-ID is public and unauthenticated: the Cloudflare tunnel forwards
+# id.hero-rehab.xyz to Traefik, which routes to this pod. The namespace-wide
+# `default-deny-ingress` (workloads/east-west/default-deny-ingress.yaml, wave 6)
+# selects every pod in `default`, so without this allow the IdP would be
+# deployed and immediately unreachable.
+#
+# Mirrors allow-traefik-to-umvc3 and allow-traefik-to-whoami exactly: a single
+# `matchLabels` selector, because these policies are translated from the
+# Kubernetes NetworkPolicy API into Cilium's model and a selector Cilium cannot
+# translate becomes a silently inert policy — the deny would land while the
+# allow did nothing.
+#
+# Port 1411 is the pod's port, not the Service port: base/apps/pocket-id/
+# service.yaml maps 80 -> targetPort http (1411), and Gateway API backends are
+# resolved to pod endpoints.
+#
+# No egress rule is needed: the namespace deny is ingress-only, and PocketID
+# only answers requests. Kubelet probes on /healthz are permitted implicitly by
+# Cilium (enable-health-checking: true).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-to-pocket-id
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: pocket-id
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 1411
+  policyTypes: ["Ingress"]

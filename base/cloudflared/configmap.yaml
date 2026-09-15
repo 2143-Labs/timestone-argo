@@ -36,4 +36,8 @@ data:
       # Access for this exact hostname must exist before this route is added.
       - hostname: k8s.hero-rehab.xyz
         service: tcp://kubernetes.default.svc:443
+      # Pocket-ID SSO IdP — must be reachable anonymously so users can log in.
+      # No oauth2-proxy gate: gating the IdP behind the IdP is circular.
+      - hostname: id.hero-rehab.xyz
+        service: http://traefik.traefik.svc:80
       - service: http_status:404

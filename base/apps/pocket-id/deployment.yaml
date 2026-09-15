@@ -1,0 +1,74 @@
+# Pocket-ID SSO IdP. Single replica with Recreate strategy: its SQLite DB lives
+# on a RWO hcloud-volumes PVC. Secret `pocket-id-secrets` (key ENCRYPTION_KEY,
+# 32-byte base64) is created imperatively at bootstrap — NOT committed here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pocket-id
+  namespace: default
+  labels:
+    app.kubernetes.io/name: pocket-id
+    app.kubernetes.io/instance: pocket-id
+spec:
+  revisionHistoryLimit: 3
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pocket-id
+      app.kubernetes.io/instance: pocket-id
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pocket-id
+        app.kubernetes.io/instance: pocket-id
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: pocket-id
+          image: ghcr.io/pocket-id/pocket-id:v2.14.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 1411
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: pocket-id-secrets
+            - configMapRef:
+                name: pocket-id
+          volumeMounts:
+            - name: pocket-id-data
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: pocket-id-data
+          persistentVolumeClaim:
+            claimName: pocket-id-data

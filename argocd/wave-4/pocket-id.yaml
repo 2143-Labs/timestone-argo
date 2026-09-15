@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pocket-id
+  namespace: argocd
+  annotations:
+    # Wave 4: the Service here is the backendRef of the HTTPRoute in
+    # base/gateway/routes.yaml, which belongs to the wave-4 `gateway`
+    # Application — keeping both in the same wave means the route resolves
+    # without gating a later wave (unlike umvc3, whose Service lands later).
+    # The ingress allow (inner sync-wave 5) must exist before the namespace-wide
+    # deny in the wave-6 east-west Application.
+    argocd.argoproj.io/sync-wave: "4"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: base/apps/pocket-id
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

@@ -1,0 +1,33 @@
+# Pocket-ID SSO IdP — public identity server at id.hero-rehab.xyz. It is the
+# OIDC issuer for cluster access. Adapted from argo/workloads/pocket-id:
+# APP_URL -> id.hero-rehab.xyz, and the optional MaxMind GeoLite entries
+# dropped (no license key).
+#
+# No auth gate: the IdP must be reachable anonymously for anyone to log in
+# (same precedent as whoami). First-run setup creates the admin account;
+# PocketID's signup mode defaults to Disabled, so this is not open
+# self-registration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pocket-id
+  namespace: default
+data:
+  ANALYTICS_DISABLED: "false"
+  APP_URL: https://id.hero-rehab.xyz
+  AUDIT_LOG_RETENTION_DAYS: "90"
+  DISABLE_RATE_LIMITING: "true"
+  FILE_BACKEND: filesystem
+  HOST: 0.0.0.0
+  INTERNAL_APP_URL: ""
+  LOCAL_IPV6_RANGES: ""
+  LOG_JSON: "false"
+  LOG_LEVEL: info
+  METRICS_ENABLED: "false"
+  PORT: "1411"
+  TRACING_ENABLED: "false"
+  TRUST_PROXY: "true"
+  TZ: Etc/UTC
+  UI_CONFIG_DISABLED: "false"
+  UPLOAD_PATH: data/uploads
+  VERSION_CHECK_DISABLED: "true"
