@@ -29,8 +29,6 @@ spec:
           type: RuntimeDefault
       containers:
         - name: umvc3
-          # Pinned to the top-level registry digest of steam-lobby run #46
-          # (commit 3d507b8d). Never a mutable tag.
           image: ghcr.io/2143-labs/steam-lobby@sha256:971d4638dc3ef7c56d763fb8665a126f14f6a2e933afaf89f37c32bd8340b78d
           imagePullPolicy: IfNotPresent
           securityContext:
