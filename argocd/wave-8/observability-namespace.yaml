@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-namespace
+  namespace: argocd
+  annotations:
+    # Wave 8: the namespace itself, alone.
+    #
+    # This must be live BEFORE `workloads/egress/observability.yaml` (Step 2)
+    # adds a namespaced default-deny-egress to `observability`, and before
+    # `bin/apply-cluster-secrets.sh` writes `grafana-oidc`, `loki-s3` and
+    # `alertmanager-ntfy` into it. A NetworkPolicy or Secret targeting a
+    # missing namespace fails to apply at all.
+    #
+    # The path is pinned to `workloads/observability-namespace`, NOT a parent
+    # directory: broadening this to a directory that later contains
+    # CustomResources would make this Application the owner of the monitoring
+    # stack, so a revert here would delete Prometheus CRs and cascade into
+    # their CRDs.
+    argocd.argoproj.io/sync-wave: "8"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: workloads/observability-namespace
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,48 @@
+# The `observability` namespace, and nothing else.
+# ============================================================================
+# This directory deliberately contains ONLY the Namespace object. Everything
+# that lands inside the namespace later (CRDs, Prometheus, Loki, Grafana,
+# policies) is owned by a different Application pointed at a different
+# directory, so this one can never be the thing that deletes a running stack.
+#
+# Why it is its own wave-8 Application rather than part of the workload
+# Applications:
+#
+#   * ORDERING. `workloads/egress` (Application `egress`, wave 7) gains a
+#     namespace-scoped `default-deny-egress` for `observability` in Step 2.
+#     A NetworkPolicy cannot be created in a namespace that does not exist, so
+#     the namespace has to be live and verified before that policy file is
+#     pushed. Landing it at wave 8 means the root Application creates it on
+#     the same sync that precedes the policy commit.
+#
+#   * SECRETS. The operator helper `bin/apply-cluster-secrets.sh` refuses to
+#     run unless the namespace already exists, and `grafana-oidc` /
+#     `loki-s3` / `alertmanager-ntfy` are created into it. Namespace first means
+#     the helper has a hard, checkable precondition instead of racing Argo.
+#
+# POD SECURITY
+# ------------
+# Enforced level is `privileged`, not `restricted` or `baseline`.
+#
+# The bundled Prometheus node-exporter scrapes /proc, /sys and the host root
+# filesystem, and its pods declare hostNetwork/hostPID/hostPath volumes. Under
+# a `baseline` or `restricted` enforce level the API server rejects those pods
+# outright, so the DaemonSet would sit at zero ready pods and the cluster would
+# have no node metrics — a silent partial failure, because the rest of the
+# stack comes up healthy.
+#
+# The audit and warn levels stay at `restricted` on purpose. That keeps every
+# *other* pod in the namespace honest: anything non-privileged that later lands
+# here still produces an audit log line and an API warning, and the only
+# workloads that may actually exceed `restricted` are the ones that already
+# need host access. Raising enforce to `privileged` is a namespace-wide
+# concession made once, not a blanket policy for the cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    kubernetes.io/metadata.name: observability
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
