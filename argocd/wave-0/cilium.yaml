@@ -76,8 +76,61 @@ spec:
         updateStrategy:
           rollingUpdate:
             maxUnavailable: 1
+        # Hubble flows and the two metrics endpoints Prometheus scrapes.
+        #
+        # ORDERING: this must not be enabled before the monitoring CRDs exist.
+        # The chart refuses to render at all when
+        # `prometheus.serviceMonitor.enabled` is true and `monitoring.coreos.com/v1`
+        # is absent from the cluster:
+        #   "Service Monitor requires monitoring.coreos.com/v1 CRDs ..."
+        # Argo renders with capabilities discovered from the live cluster, so
+        # enabling this first would make the Cilium Application — the CNI's own
+        # GitOps entrypoint — fail to generate, not merely fail to sync. The
+        # wave-10 kube-prometheus-stack Application installs those CRDs, and
+        # this change lands only after they are Established.
         hubble:
-          enabled: false
+          enabled: true
+          # Relay is deliberately OFF. Relay exists to aggregate flows from every
+          # agent for a central consumer; Prometheus scrapes each agent's
+          # 9965 endpoint directly, so a Relay would add a Service, a DNS name
+          # and a 4244 ingress path that nothing uses.
+          relay:
+            enabled: false
+          ui:
+            enabled: false
+          metrics:
+            # OpenMetrics so the drop counters keep their `_total` suffix and
+            # the alert expression below matches what is actually emitted.
+            enableOpenMetrics: true
+            enabled:
+              # dns:query gives the per-query resolution counters.
+              - "dns:query;ignoreAAAA"
+              # The drop metric carries the five context labels the
+              # HubblePolicyDrops rule groups by. Without `labelsContext` the
+              # series has only the verdict and is useless for answering "which
+              # workload was blocked" — which is the entire operational purpose
+              # of enabling it.
+              #
+              # These five are exactly the bounded, low-cardinality labels. The
+              # deprecated HTTP/HTTPV2/TCP options and the per-pod or per-IP
+              # label variants are NOT enabled: an IP or pod-UID label set turns
+              # this metric into an unbounded series generator, and Cilium
+              # documents those forms as deprecated for that reason.
+              - "drop:labelsContext=source_namespace,source_workload,destination_namespace,destination_workload,traffic_direction"
+              - "flow:labelsContext=source_namespace,source_workload,destination_namespace,destination_workload,traffic_direction"
+            serviceMonitor:
+              enabled: true
+              labels:
+                # The matchLabels the wave-10 Prometheus selects on. Without
+                # this label the ServiceMonitor exists but is invisible, and
+                # the only symptom is a missing target rather than an error.
+                release: kube-prometheus-stack
+        prometheus:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+            labels:
+              release: kube-prometheus-stack
         # Keep the operator available while one of the three schedulable
         # control-plane nodes is drained or upgraded.
         operator:
