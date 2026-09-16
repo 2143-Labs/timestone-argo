@@ -138,15 +138,37 @@ curl -s --get --data-urlencode \
   localhost:19090/api/v1/query | jq -r '.data.result[]|.metric'
 ```
 
-Then, for the reason as Cilium categorised it:
+### What is not actionable — check this before investigating
+
+Two drop classes exist on this cluster and only one of them means anything.
+Read the reason label before spending time on a source namespace.
+
+| reason | meaning | action |
+|---|---|---|
+| `POLICY_DENIED` | a policy verdict — something was blocked by a rule | investigate; this is what `HubblePolicyDrops` fires on |
+| `UNSUPPORTED_L3_PROTOCOL` | a non-IP protocol, in practice ICMPv6 | none |
+
+`UNSUPPORTED_L3_PROTOCOL` on ICMPv6 is **expected and permanent** here. The
+cluster runs with IPv6 disabled (`enable-ipv6: false` in the Cilium values), so
+IPv6 packets arriving from the Hetzner network — router advertisements and
+neighbour discovery — have nowhere to go. It sits at a low steady rate
+(observed around 0.01/s) with `traffic_direction=ingress` and no workload
+labels, and it will never reach zero. It is not a symptom, and suppressing it
+would mean hiding real drops alongside it.
+
+A quick way to tell them apart without reading labels:
 
 ```sh
 curl -s --get --data-urlencode 'query=sum by (reason) (rate(hubble_drop_total[5m]))' \
   localhost:19090/api/v1/query | jq -r '.data.result[]|"\(.metric.reason) \(.value[1])"'
 ```
 
-`POLICY_DENIED` is a policy verdict. `UNSUPPORTED_L3_PROTOCOL` is a non-IP
-protocol and is not actionable.
+If only `POLICY_DENIED 0` and an `UNSUPPORTED_L3_PROTOCOL` non-zero value appear,
+there is **no unexplained deny** and nothing to fix — that is the clean steady
+state, and it is what a healthy cluster looks like after a probe has been
+removed.
+
+### Triage
 
 Read the five context labels as: source namespace and workload, destination
 namespace and workload, and the direction. Then:
