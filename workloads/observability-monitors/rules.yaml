@@ -41,10 +41,21 @@ spec:
             # policy, never widen to `world`.
             runbook: docs/observability.md
           annotations:
+            # The workload halves are conditional because Cilium only sets
+            # `source_workload`/`destination_workload` when it can resolve a
+            # workload name for the endpoint. A bare Pod — no owner, no
+            # `app.kubernetes.io/name` — produces a policy verdict with the
+            # namespaces and direction populated and both workload labels
+            # ABSENT, which was confirmed live with a probe pod. Interpolating
+            # them unconditionally renders "observability/ and kube-system/",
+            # a trailing slash that reads like a truncated name at exactly the
+            # moment an operator is deciding what to trust.
             summary: >-
-              Network policy is dropping flows between
-              {{ $labels.source_namespace }}/{{ $labels.source_workload }} and
-              {{ $labels.destination_namespace }}/{{ $labels.destination_workload }}
+              Network policy is dropping flows from
+              {{ $labels.source_namespace }}{{ if $labels.source_workload }}/{{ $labels.source_workload }}{{ end }}
+              to
+              {{ $labels.destination_namespace }}{{ if $labels.destination_workload }}/{{ $labels.destination_workload }}{{ end }}
+              ({{ $labels.traffic_direction }})
             description: >-
               Hubble has observed a sustained policy-denied verdict
               ({{ $value }} flows/s) for traffic_direction
