@@ -55,6 +55,26 @@ spec:
           # admission path.
           admissionWebhooks:
             enabled: false
+          # REQUIRED alongside the above in chart 91.4.1, not cosmetic.
+          #
+          # The operator Deployment mounts the admission TLS Secret whenever
+          # `prometheusOperator.tls.enabled` is true, and that Secret is created
+          # by the admission-webhook cert job — which disabling
+          # `admissionWebhooks` removes. The result is a pod that never leaves
+          # ContainerCreating:
+          #
+          #   MountVolume.SetUp failed for volume "tls-secret":
+          #     secret "kube-prometheus-stack-admission" not found
+          #
+          # Turning TLS off removes the volume, the /cert mount and the
+          # `--web.enable-tls/--web.cert-file/--web.key-file` flags together,
+          # and moves the operator's web server from TLS on 10250 to plain HTTP
+          # on 8080. Its Service is regenerated to match (port 8080 ->
+          # targetPort http), so nothing is left pointing at a port that no
+          # longer exists. The operator keeps serving its metrics; it simply
+          # stops doing so over TLS that nothing was verifying anyway.
+          tls:
+            enabled: false
           serviceMonitor:
             # No ServiceMonitor for the operator itself. Its metrics are only
             # reachable through the `kube-prometheus-stack-operator` Service on

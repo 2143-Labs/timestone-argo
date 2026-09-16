@@ -538,6 +538,15 @@ spec:
       ports:
         - protocol: TCP
           port: 9090
+        # The config-reloader sidecar's own endpoint. The chart's ServiceMonitor
+        # for Prometheus scrapes TWO named ports on this same pod -- `http-web`
+        # (9090) and `reloader-web` (8080) -- so allowing only 9090 leaves a
+        # target that is down permanently, which is exactly the condition the
+        # `no down target` gate exists to catch. The reloader port is a
+        # different CONTAINER in the same pod, so it is the pod-level ingress
+        # policy that has to name it.
+        - protocol: TCP
+          port: 8080
   policyTypes: ["Ingress"]
 ---
 # Ingress: Alertmanager <- Prometheus (alert delivery).
@@ -560,6 +569,11 @@ spec:
       ports:
         - protocol: TCP
           port: 9093
+        # Same reasoning as the Prometheus case above: the Alertmanager
+        # ServiceMonitor scrapes `reloader-web` (8080) as well as `http-web`
+        # (9093), from this same Prometheus source.
+        - protocol: TCP
+          port: 8080
   policyTypes: ["Ingress"]
 ---
 # Ingress: Loki <- Alloy (push) and <- Grafana (queries), plus Loki's own ring.
