@@ -379,7 +379,30 @@ spec:
         - matchName: prometheus-community.github.io
         - matchName: grafana-community.github.io
         - matchName: grafana.github.io
+        # GitHub release assets, where a Helm chart tarball ACTUALLY comes
+        # from. This is not a path under github.com: a chart index on a Pages
+        # host publishes urls of the form
+        #   https://github.com/<org>/<repo>/releases/download/<tag>/<chart>.tgz
+        # and GitHub answers that with a redirect to release-assets
+        # .githubusercontent.com (185.199.10x.133). Both the chart repos this
+        # unit uses publish that way, verified from their live index.yaml:
+        # prometheus-community/helm-charts and spiffe/helm-charts-hardened.
+        #
+        # Omitting it does not produce a 403 or a DNS error. The SYN to the
+        # redirect target is dropped, so `helm pull` hangs until Argo's own
+        # 90-second deadline and the Application reports DeadlineExceeded while
+        # every other Application stays Healthy. That is what made `spire` and
+        # `spire-crds` sit at Sync Unknown at the start of this work: GitHub
+        # serves release assets from release-assets.githubusercontent.com, and
+        # the allowlist only ever named objects.githubusercontent.com. The two
+        # names resolve to the same addresses today, but Cilium associates a
+        # connection with the FQDN it was looked up under, so a host that is
+        # never named is never permitted.
+        #
+        # Kept as two entries rather than one: they are separate names in
+        # GitHub's CDN and either can be renamed independently.
         - matchName: objects.githubusercontent.com
+        - matchName: release-assets.githubusercontent.com
       toPorts:
         - ports:
             - port: "443"
