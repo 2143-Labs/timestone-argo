@@ -25,22 +25,27 @@ argocd/
   root-app.yaml     # App-of-Apps → path argocd, recurse (applied ONCE per cluster
                     #   at bootstrap by the argocd-bootstrap oneshot; NOT
                     #   self-managed, mirrors the 59s pattern)
-  wave--5..0/       # sync-wave annotation ordering:
-                    #   -5 gateway-api-crds (external repo, v1.5.1)
-                    #    0 traefik (helm 41.5.0 → v3.7.13, kubernetesGateway provider)
-                    #    1 cnpg-operator (helm 0.29.0 → operator 1.30.0)
-                    #    2 cnpg-cluster (base/cnpg)
-                    #    3 temporal (helm 1.5.0)
-                    #    4 gateway (base/gateway) + whoami (base/apps/whoami)
-                    #      + temporal-bootstrap + pocket-id (base/apps/pocket-id)
-                    #    5 cloudflared (base/cloudflared)
+  wave--5..15/      # sync-wave annotation ordering. The full, generated list of
+                    #   every child Application — name, wave, directory, chart
+                    #   version and destination namespace — lives in
+                    #   docs/README.md; it is not duplicated here so it cannot
+                    #   drift out of date again. Waves group as: infrastructure
+                    #   (-5..0), datastore and identity (1..4), ingress and the
+                    #   public apps (4..5), the policy layer (6..7), and the
+                    #   observability stack (8..15).
+workloads/          # policy + observability directories, each its own child app
 base/               # shared plain YAML per component (dir = one ArgoCD child app)
-  cnpg/cluster.yaml             # CNPG Cluster `timestone` (single instance, db node)
+  cnpg/cluster.yaml             # CNPG Cluster `timestone` (single instance,
+                                #   hcloud-volumes)
   gateway/gateway.yaml          # Gateway `timestone-gateway` (http :80, ns default)
-  gateway/routes.yaml           # HTTPRoute whoami ONLY — public hosts are an
-                                #   explicit allowlist (Temporal is internal-only)
-  apps/whoami/{deployment,service}.yaml
+  gateway/routes.yaml           # HTTPRoutes: whoami + pocket-id. The Temporal UI is
+                                #   NOT routed here — it is reached through the
+                                #   oauth2-proxy gate, and routing to temporal-web
+                                #   directly would publish an unauthenticated UI.
+  apps/{whoami,umvc3,pocket-id}/
   cloudflared/{configmap,deployment}.yaml
+  hcloud-ccm/ spire/ temporal-bootstrap/
+docs/               # operator runbooks + the generated Application map
 nonprod/            # NONPROD env tree (home cluster): own root-app + wave apps,
                     #   applied once to the home ArgoCD. Sibling of argocd/ so the
                     #   prod root (recurse over argocd/) can never sync it.
