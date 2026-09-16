@@ -57,6 +57,25 @@ spec:
           autoMount:
             enabled: false
           hostRoot: /sys/fs/cgroup
+
+        # The agent DaemonSet's rollout bound, and a permanent safety value
+        # rather than a one-off for the metrics change below.
+        #
+        # Cilium IS the datapath: each agent handles its own node's pod traffic,
+        # policies and kube-proxy replacement. The chart's default lets a
+        # DaemonSet update them all at once, so a value change takes the whole
+        # cluster's networking down simultaneously — including the cloudflared
+        # tunnel that is the operator's only path in, which turns a botched
+        # rollout into a break-glass recovery.
+        #
+        # With maxUnavailable 1, agents restart one node at a time and the
+        # remaining two keep serving. This is set BEFORE the Hubble/metrics
+        # change so that change can never be the first thing to exercise an
+        # unbounded rollout, and it is left in place afterwards because the next
+        # value change will need it just as much.
+        updateStrategy:
+          rollingUpdate:
+            maxUnavailable: 1
         hubble:
           enabled: false
         # Keep the operator available while one of the three schedulable
