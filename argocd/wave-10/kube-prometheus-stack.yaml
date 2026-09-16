@@ -1,0 +1,278 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  annotations:
+    # Wave 10: metrics. Deliberately AFTER the namespace (wave 8) and the
+    # policies (wave 7), and deliberately BEFORE the Cilium/Hubble metrics
+    # change and everything that consumes ServiceMonitor/PodMonitor/
+    # PrometheusRule.
+    #
+    # The ordering against Cilium is not cosmetic. The Cilium chart REFUSES to
+    # render when `prometheus.serviceMonitor.enabled` is true and
+    # `monitoring.coreos.com/v1` is absent from the cluster:
+    #
+    #   "Service Monitor requires monitoring.coreos.com/v1 CRDs. Please refer to
+    #    ... or set .Values.prometheus.serviceMonitor.trustCRDsExist=true"
+    #
+    # Argo renders Cilium with capabilities discovered from the live cluster, so
+    # enabling its ServiceMonitors before this Application has installed the
+    # CRDs would make the Cilium Application fail to render — i.e. it would
+    # break the CNI's GitOps entrypoint to add monitoring to it. This wave must
+    # therefore be synced and its CRDs Established first.
+    argocd.argoproj.io/sync-wave: "10"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    chart: kube-prometheus-stack
+    repoURL: https://prometheus-community.github.io/helm-charts
+    # Resolved 2026-09-16. chart 91.4.1 ships appVersion v0.94.0 (Prometheus
+    # Operator) with Prometheus v3.14.0-distroless and Alertmanager v0.34.0.
+    # Upgrades are separate follow-up commits, never "latest".
+    targetRevision: 91.4.1
+    helm:
+      releaseName: kube-prometheus-stack
+      values: |
+        # Grafana is deployed separately (wave 13) from the grafana-community
+        # chart, so the copy vendored inside this chart must not also install
+        # one. Two Grafanas would fight over the same Service name and the same
+        # PocketID client.
+        grafana:
+          enabled: false
+
+        prometheusOperator:
+          # The admission webhooks (which validate PrometheusRule and
+          # AlertmanagerConfig objects) are disabled on purpose. They add two
+          # API-server -> operator ingress paths on port 10250 with
+          # `failurePolicy: Fail`, and this cluster's cluster-wide
+          # `default-deny-cluster` policy makes every such webhook an
+          # availability dependency of the API server itself: an unreachable
+          # webhook blocks the API operation instead of skipping it. The
+          # operator's own CRD validation still applies; nothing here needs the
+          # admission path.
+          admissionWebhooks:
+            enabled: false
+          serviceMonitor:
+            # No ServiceMonitor for the operator itself. Its metrics are only
+            # reachable through the `kube-prometheus-stack-operator` Service on
+            # 443 with a self-signed cert, which would need an additional
+            # tlsConfig + RBAC path for no operational value at this size.
+            selfMonitor: false
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+        # Disable the control-plane components that do not exist as scrapeable
+        # endpoints on Talos. Talos runs the API server, controller-manager,
+        # scheduler and etcd as static pods managed by its own machinery: there
+        # is no controller-manager or scheduler Service, no etcd metrics port
+        # exposed to the pod network, and kube-proxy is replaced by Cilium, so
+        # there is no kube-proxy at all. Left enabled, each of these produces a
+        # target that is DOWN forever and a permanent KubeControllerManagerDown
+        # / KubeSchedulerDown / KubeEtcdDown / KubeProxyDown alert — a stack
+        # that is permanently noisy about components the platform deliberately
+        # does not run. Disabled, they are absent from config instead.
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeProxy:
+          enabled: false
+
+        # These five do exist and are kept.
+        kubeApiServer:
+          enabled: true
+        kubelet:
+          enabled: true
+        coreDns:
+          enabled: true
+        kubeStateMetrics:
+          enabled: true
+        nodeExporter:
+          enabled: true
+
+        kube-state-metrics:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+
+        # node-exporter is hostNetwork on every node (chart default
+        # `hostNetwork: true`, plus hostPID and a host-root mount for the
+        # filesystem collector). That is why the `observability` namespace
+        # enforces PodSecurity `privileged`: at `baseline` or `restricted` the
+        # API server rejects these pods outright and the cluster silently has no
+        # node metrics while every Application still reports Healthy.
+        prometheus-node-exporter:
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+        prometheus:
+          prometheusSpec:
+            scrapeInterval: 30s
+            evaluationInterval: 30s
+            # 15 days against a 16 GB cap: the cap is what actually protects the
+            # 20Gi volume, since a busy discovery set can grow the head faster
+            # than a time bound would suggest. Whichever limit is reached first
+            # wins.
+            retention: 15d
+            retentionSize: 16GB
+            resources:
+              requests:
+                cpu: 300m
+                memory: 1Gi
+              limits:
+                cpu: "2"
+                memory: 2Gi
+
+            # The `*NilUsesHelmValues` flags are the single most important set
+            # of values here. Left at their defaults, each selector stays
+            # subject to the chart's own `release: <release>` internals: custom
+            # ServiceMonitors, PodMonitors and PrometheusRules would be silently
+            # invisible unless they happened to carry exactly the right label,
+            # and the failure mode is an empty dashboard, not an error. Setting
+            # all three false plus an explicit matchLabels makes the contract
+            # literal and greppable: `release: kube-prometheus-stack` on every
+            # monitor and rule this repository authors.
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            serviceMonitorSelector:
+              matchLabels:
+                release: kube-prometheus-stack
+            serviceMonitorNamespaceSelector: {}
+            podMonitorSelector:
+              matchLabels:
+                release: kube-prometheus-stack
+            podMonitorNamespaceSelector: {}
+            ruleSelector:
+              matchLabels:
+                release: kube-prometheus-stack
+            ruleNamespaceSelector: {}
+
+            # Retain, not Delete. A StatefulSet's PVCs survive deletion by
+            # default, but the Prometheus CR's own policy is what Argo/manual
+            # deletion of the CR consults, so it is set explicitly: the TSDB is
+            # the only copy of this cluster's metric history and a rollback must
+            # never be able to destroy it.
+            persistentVolumeClaimRetentionPolicy:
+              whenDeleted: Retain
+              whenScaled: Retain
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: hcloud-volumes
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 20Gi
+
+        alertmanager:
+          alertmanagerSpec:
+            # One replica. Alertmanager deduplicates notifications within a
+            # cluster, so a second replica is only justified for availability —
+            # and it would need a second RWO volume rather than a shared one.
+            replicas: 1
+            resources:
+              requests:
+                cpu: 25m
+                memory: 64Mi
+              limits:
+                cpu: 250m
+                memory: 256Mi
+            # Mounted at /etc/alertmanager/secrets/alertmanager-ntfy/, which is
+            # the path the `url_file` below references. Created imperatively by
+            # timestone-tofu's bin/apply-cluster-secrets.sh (key `url`), because
+            # Argo's selfHeal would revert a value committed to Git.
+            secrets:
+              - alertmanager-ntfy
+            # A Kubernetes Secret update does not restart its consumer, so the
+            # rotation runbook bumps this annotation and Argo rolls the pod.
+            podMetadata:
+              annotations:
+                timestone.io/secret-revision: "1"
+            persistentVolumeClaimRetentionPolicy:
+              whenDeleted: Retain
+              whenScaled: Retain
+            storage:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: hcloud-volumes
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      # Hetzner's attached-volume floor. Silences and the
+                      # notification log are tiny; the size is the provider's
+                      # minimum, not a measured requirement.
+                      storage: 10Gi
+
+          # The chart merges this into its own default inhibition rules (all
+          # four are rendered verbatim alongside the below), so only the route
+          # and the receivers are authored here.
+          #
+          # `url_file` rather than `url`: the topic URL is a Secret, so
+          # Alertmanager reads it from the mounted file instead of embedding it
+          # in the rendered ConfigMap. Prometheus Operator renders this config
+          # into the `alertmanager-kube-prometheus-stack-alertmanager` Secret.
+          config:
+            route:
+              group_by: [namespace, alertname]
+              group_wait: 30s
+              group_interval: 5m
+              repeat_interval: 12h
+              receiver: ntfy
+              routes:
+                # Watchdog is a permanently-firing heartbeat alert: it must
+                # never reach a human, because an alert that is always firing is
+                # an alert nobody reads.
+                - receiver: "null"
+                  matchers: ['alertname = "Watchdog"']
+                # InfoInhibitor fires when an inhibition has hidden something;
+                # it is diagnostic bookkeeping, not a condition to act on.
+                - receiver: "null"
+                  matchers: ['alertname = "InfoInhibitor"']
+            receivers:
+              # A real receiver, not a missing one: an Alertmanager config with
+              # no `null` receiver fails to load, and every alert that matches
+              # no route would then be undeliverable.
+              - name: "null"
+              - name: ntfy
+                webhook_configs:
+                  # ntfy's own Alertmanager transformation renders the webhook
+                  # payload into a readable title and body, which is why no
+                  # relay service exists here. `send_resolved` is on so recovery
+                  # is reported too, not just failure.
+                  - url_file: /etc/alertmanager/secrets/alertmanager-ntfy/url
+                    send_resolved: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      # The first sync creates ten CRDs and their CustomResources together.
+      # Argo's dry-run diff of the CRs fails while the CRDs are still absent, so
+      # without this the very first sync reports a comparison error even though
+      # the apply itself would succeed.
+      - SkipDryRunOnMissingResource=true
