@@ -39,3 +39,48 @@ spec:
       # using the same ServiceAccount and label. See
       # workloads/openbao-sync/namespace.yaml.
       kubernetes.io/metadata.name: openbao-sync
+---
+# Workload identity for the observability stack's S3 consumer.
+#
+# Loki holds NO static AWS credential. Instead its pod presents a JWT-SVID to
+# AWS STS (`sts:AssumeRoleWithWebIdentity`) and receives short-lived credentials.
+# That requires this registration entry to exist and to produce exactly the
+# SPIFFE ID the role's trust policy pins:
+#
+#   spiffe://trust.hero-rehab.xyz/ns/observability/sa/loki
+#
+# The ID embeds BOTH the namespace and the ServiceAccount, so the two sides must
+# agree to the character. The chart creates ServiceAccount `loki` from the
+# release name, and the release lands in `observability`; renaming either one
+# silently breaks authentication at the next credential refresh, with the only
+# symptom being Loki's S3 writes starting to fail. The AWS trust policy should
+# therefore be treated as coupled to this file.
+#
+# Why a dedicated entry rather than a namespace-wide one: the SPIFFE ID carries
+# the namespace, so a selector on the namespace alone would hand this identity
+# to every pod the observability stack ever deploys. The pod label keeps the
+# identity attached to the one workload that needs to talk to AWS, which is also
+# what lets the AWS trust policy stay as narrow as a single exact `sub`.
+#
+# The same caution applies to the label as to the openbao entry above: this is
+# only safe because ARGO cannot be talked into adding the label to an unrelated
+# pod — the label lives in the Loki Application's own values.
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: timestone-observability
+spec:
+  className: "default-spire"
+  # Identical template to the openbao entry, deliberately: the two identities
+  # must be shaped the same way, and `spiffeIDTemplate` is the single place that
+  # shape is defined cluster-wide.
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      # Set by the Loki Application (singleBinary.podLabels). Without it the Loki
+      # pod gets no registration entry, the Workload API returns nothing, and
+      # spiffe-helper never writes a token file.
+      spire.io/observability-identity: "true"
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: observability
