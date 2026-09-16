@@ -1,0 +1,118 @@
+# PodMonitors for the pods Prometheus scrapes directly.
+#
+# WHY A PodMonitor AND NOT A ServiceMonitor: none of these four targets has a
+# Service that exposes its metrics port. The CloudNativePG instances and
+# operator, the Temporal components and Traefik all declare the port on the pod
+# itself, so there is nothing for a ServiceMonitor to select. A ServiceMonitor
+# written anyway would produce zero targets and no error, which is the failure
+# mode this file is written to avoid.
+#
+# THE LABEL IS LOAD-BEARING. Wave 10's Prometheus carries
+# `podMonitorSelector.matchLabels: {release: kube-prometheus-stack}` with
+# `podMonitorSelectorNilUsesHelmValues: false`. A PodMonitor without that label
+# is not selected, is not reconciled, and produces no target and no warning —
+# a rule that exists in Git and does nothing.
+#
+# The cross-namespace targets (`default`, `cnpg-system`, `traefik`) are why
+# `workloads/east-west/allow-observability-scrapes.yaml` had to exist before any
+# of this lands. Under the enforced cluster-wide deny, naming a target in a
+# PodMonitor is not enough: the destination namespace must also admit the
+# connection, or the scrape times out and the target reports as down.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: temporal
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  # Explicit namespace, not an empty selector. An empty namespaceSelector would
+  # discover every pod in the cluster carrying a `app.kubernetes.io/name:
+  # temporal` label, which is a discovery surface this repository does not need.
+  namespaceSelector:
+    matchNames:
+      - default
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: temporal
+    matchExpressions:
+      # Only the four scalar components export metrics. The pod label set
+      # includes `web` and `admintools` (confirmed live), and neither declares a
+      # port named `metrics` at all, so including them would create targets the
+      # operator cannot resolve.
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          - frontend
+          - history
+          - matching
+          - worker
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+---
+# Both CloudNativePG clusters' instance metrics (9187).
+#
+# `app.kubernetes.io/name: postgresql` is shared by `timestone` and `umvc3-db`.
+# They are separated by `cnpg.io/cluster` wherever a policy needs to distinguish
+# them, but for a read-only scrape both are intended targets, so one monitor
+# covers both instead of two near-identical ones.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cnpg-databases
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - default
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+---
+# The CloudNativePG operator's controller-runtime metrics (8080). Its webhook
+# port (9443) is deliberately not scraped: it serves admission calls from the
+# API server, which is a reserved identity rather than a scrape target.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cnpg-operator
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - cnpg-system
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+---
+# Traefik's entrypoint and request metrics (9100). This is the traffic view the
+# network-policy dashboard uses to show that a drop is hurting real requests
+# rather than only a probe.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: traefik
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - traefik
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s

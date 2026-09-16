@@ -1,0 +1,58 @@
+# Network-policy alerts.
+#
+# The only rule this repository authors. Everything else — node, kubelet, API
+# server, storage, application-level availability — already ships with
+# kube-prometheus-stack's 30 PrometheusRules, which are selected by the same
+# `release: kube-prometheus-stack` matchLabels. Adding a second copy of those
+# would mean two places to change when one is tuned.
+#
+# THIS LABEL IS NOT DECORATIVE. Wave 10's Prometheus carries
+# `ruleSelector.matchLabels: {release: kube-prometheus-stack}` with
+# `ruleSelectorNilUsesHelmValues: false`. Without it the rule below is stored,
+# never loaded, and the failure is silent: no alert, no error, and an operator
+# who believes drops are being watched.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: timestone-network
+  namespace: observability
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: timestone-network
+      rules:
+        - alert: HubblePolicyDrops
+          # 10 minutes, not 1: this cluster's own egress work proved that
+          # short-lived policy churn is normal (a rollout briefly drops flows as
+          # endpoints re-identity). A 1-minute window would page on every Cilium
+          # restart. 10 minutes of continuous drops is a policy that is wrong
+          # rather than a policy that is changing.
+          for: 10m
+          expr: |
+            sum by (source_namespace, source_workload, destination_namespace, destination_workload, traffic_direction) (
+              rate(hubble_flows_processed_total{type="PolicyVerdict",verdict="DROPPED"}[5m])
+            ) > 0
+          labels:
+            severity: warning
+            # Names the alert's own runbook rather than leaving the operator to
+            # reconstruct intent from the expression. `docs/observability.md`
+            # carries the triage path: labels -> owning policy -> narrow the
+            # policy, never widen to `world`.
+            runbook: docs/observability.md
+          annotations:
+            summary: >-
+              Network policy is dropping flows between
+              {{ $labels.source_namespace }}/{{ $labels.source_workload }} and
+              {{ $labels.destination_namespace }}/{{ $labels.destination_workload }}
+            description: >-
+              Hubble has observed a sustained policy-denied verdict
+              ({{ $value }} flows/s) for traffic_direction
+              {{ $labels.traffic_direction }} over the last 5 minutes, for more
+              than 10 minutes. This is almost always a missing allow rule rather
+              than an attack: the cluster enforces a cluster-wide default-deny,
+              so a workload whose policy was not updated alongside its new
+              destination appears here. Triage from the labels to the owning
+              policy in workloads/egress/ or workloads/east-west/ and add the
+              narrowest rule that restores the flow. Do not widen anything to
+              `world`.

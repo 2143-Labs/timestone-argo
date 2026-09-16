@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-monitors
+  namespace: argocd
+  annotations:
+    # Wave 11: after the Prometheus stack (wave 10) installed the
+    # PodMonitor and PrometheusRule CRDs.
+    #
+    # This ordering is not a preference. Both objects below are CustomResources
+    # of CRDs that wave 10 creates; applying them first would fail with
+    # "no matches for kind" and leave the Application permanently OutOfSync.
+    # It is the same dependency that made the Cilium metrics change wait.
+    argocd.argoproj.io/sync-wave: "11"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/2143-Labs/timestone-argo.git
+    targetRevision: HEAD
+    path: workloads/observability-monitors
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # The first sync creates CustomResources whose CRDs arrive in the same
+      # push from a different Application. Argo's dry-run diff of the CRs fails
+      # while the CRDs are still absent, so without this the first sync reports
+      # a comparison error even though the apply would succeed.
+      - SkipDryRunOnMissingResource=true
