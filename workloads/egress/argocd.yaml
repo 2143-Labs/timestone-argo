@@ -355,6 +355,30 @@ spec:
         - matchName: go.temporal.io
         - matchName: helm.traefik.io
         - matchName: traefik.github.io
+        # The observability stack's chart sources (waves 10-13).
+        #
+        # These are separate HOSTS, not paths under github.com: GitHub Pages
+        # serves each organisation from its own `<org>.github.io` hostname, so
+        # `github.com` being allowed does not cover them. The failure mode is
+        # worth naming because it does not look like a policy problem: the
+        # repo-server's fetch hangs until Argo's own deadline, and the
+        # Application reports
+        #   "failed to generate manifest ... code = DeadlineExceeded"
+        # while every other Application stays Healthy. That reads as an Argo
+        # fault, not as a missing egress rule.
+        #
+        #   prometheus-community.github.io   kube-prometheus-stack (wave 10)
+        #   grafana-community.github.io      loki (wave 12), grafana (wave 13)
+        #   grafana.github.io                alloy (wave 12)
+        #
+        # kube-prometheus-stack also declares its subcharts as OCI dependencies
+        # under ghcr.io, but its published archive BUNDLES those subcharts in
+        # `charts/`, and Argo does not run `helm dependency update` — it
+        # templates the archive as fetched. ghcr.io is therefore deliberately
+        # absent.
+        - matchName: prometheus-community.github.io
+        - matchName: grafana-community.github.io
+        - matchName: grafana.github.io
         - matchName: objects.githubusercontent.com
       toPorts:
         - ports:
