@@ -401,6 +401,68 @@ spec:
             - port: "6443"
               protocol: TCP
 ---
+# The Temporal UI auth gate.
+#
+# oauth2-proxy sits between Traefik and temporal-web. Its outbound needs are
+# exactly three:
+#
+#   1. Cluster DNS, through the L7 proxy. Required for the FQDN rule below:
+#      Cilium only learns FQDN->IP from observed DNS answers, and only when an
+#      L7 `rules.dns` block puts the DNS proxy in the path. Without it the
+#      `id.hero-rehab.xyz` rule matches nothing and every login fails.
+#   2. `id.hero-rehab.xyz` on 443 — the PocketID issuer's discovery document,
+#      token endpoint and JWKS. This is the PUBLIC route, which terminates at
+#      the Cloudflare edge and only then reaches Traefik, so from inside the
+#      cluster it is a `world` address. Allowing the pocket-id pod instead
+#      would not work: the proxy dials the public hostname, not the Service.
+#   3. Temporal Web on 8080 (the `--upstream` target). Port 8080 is the web
+#      component's http port, not the frontend's gRPC port.
+#
+# Deliberately NO API access. The proxy is a reverse proxy, not a controller:
+# it reads its configuration from flags and a Secret, so it has no reason to
+# hold a service-account token at all (its Deployment sets
+# `automountServiceAccountToken: false` to make that explicit and enforceable).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-oauth2-proxy-egress
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app: oauth2-proxy-temporal
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: id.hero-rehab.xyz
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: temporal
+            app.kubernetes.io/component: web
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
 # whoami intentionally has NO allow here: it has no outbound needs, and its own
 # default-deny (Ingress+Egress) from the previous stage already covers both
 # directions for that pod.

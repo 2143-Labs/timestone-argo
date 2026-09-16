@@ -7,13 +7,20 @@
 #
 # Traefik is the single entry point for the public routes: the Cloudflare
 # tunnel forwards every hostname to `traefik.traefik.svc:80`, and Traefik
-# routes to exactly four backends, enumerated below from the live HTTPRoutes
+# routes to exactly six backends, enumerated below from the live HTTPRoutes
 # (ports are POD ports, not Service ports):
 #
 #   whoami.hero-rehab.xyz        -> default/whoami                          :80
 #   umvc3-ranked.hero-rehab.xyz  -> default/umvc3                           :8080
 #   id.hero-rehab.xyz            -> default/pocket-id                       :1411
 #   spiffe.hero-rehab.xyz        -> spire-server/spiffe-oidc-discovery-...  :8080
+#   grafana.hero-rehab.xyz       -> observability/grafana                   :3000
+#   temporal.hero-rehab.xyz      -> default/oauth2-proxy-temporal          :4180
+#
+# The last two are the observability unit: Grafana carries its own PocketID
+# OIDC login, and the Temporal route terminates at the oauth2-proxy gate
+# rather than at temporal-web, so the browser never reaches Temporal
+# unauthenticated.
 #
 # As an ingress controller Traefik also has to talk to the Kubernetes API: it
 # drives both the CRD provider (--providers.kubernetescrd) and the Gateway API
@@ -86,6 +93,30 @@ spec:
             - port: "8080"
               protocol: TCP
             - port: "1411"
+              protocol: TCP
+    # 4. The two gated observability backends from this stage.
+    #
+    #    Grafana is the only cross-namespace route backend in the cluster:
+    #    its HTTPRoute lives in `observability` (Gateway API resolves
+    #    backendRefs only within the Route's own namespace) and the Gateway
+    #    listener has been extended to allow routes from that namespace.
+    #
+    #    oauth2-proxy-temporal is reached on its pod port 4180; the Temporal
+    #    Web Service (8080) is deliberately NOT a backend here. Adding it
+    #    would publish an unauthenticated Temporal UI and bypass the gate
+    #    that the rest of this change exists to install.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: grafana
+            io.kubernetes.pod.namespace: observability
+        - matchLabels:
+            app: oauth2-proxy-temporal
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+            - port: "4180"
               protocol: TCP
 ---
 # The tunnel connector must reach Traefik before Traefik can route anything.

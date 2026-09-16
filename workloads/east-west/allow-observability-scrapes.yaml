@@ -1,0 +1,180 @@
+# Ingress for Prometheus's cross-namespace scrape targets.
+# ============================================================================
+#
+# WHY THIS FILE EXISTS
+#
+# `CiliumClusterwideNetworkPolicy/default-deny-cluster` (workloads/east-west-stage4/, live and
+# Valid=True) selects every Cilium-managed endpoint and denies BOTH directions. An egress rule on
+# the Prometheus side is therefore only half of each flow: the destination namespace has to
+# permit the connection as well, or the scrape returns a timeout.
+#
+# `default` additionally carries its own `default-deny-ingress` (and an older `default-deny`),
+# so the Temporal and PostgreSQL entries below are required even without the cluster-wide object.
+#
+# WHY THE TARGETS ARE CROSS-NAMESPACE
+#
+# A Kubernetes NetworkPolicy is scoped to its own namespace, so one object cannot express "Pod X
+# in namespace A may reach Pod Y in namespace B". Instead each destination gets its own narrow
+# NetworkPolicy in ITS namespace, all pointing back at the single source: namespace
+# `observability`, pod `app.kubernetes.io/name: prometheus`.
+#
+# The source selector uses a namespaceSelector + podSelector pair rather than
+# `io.kubernetes.pod.namespace` inside matchLabels. Those two spellings are NOT interchangeable:
+# `io.kubernetes.pod.namespace` is a Cilium-side label key that only works inside a
+# CiliumNetworkPolicy, whereas these are plain Kubernetes NetworkPolicies and must use the
+# native `namespaceSelector` form. Using the Cilium spelling here would create a policy that
+# translates to nothing — the deny would stand while the allow silently did nothing.
+#
+# Every podSelector below is a single `matchLabels` entry, never `matchExpressions`, for the same
+# reason the rest of this repository's east-west policies are: a selector Cilium cannot translate
+# becomes a silently inert policy. Targets that would naturally have shared one policy are
+# therefore split across two objects rather than expressed as one `In` expression.
+#
+# WHAT IS *NOT* HERE
+#
+#   * kubelet (10250), node-exporter (9100) and Cilium/Hubble (9962/9965). All are hostNetwork,
+#     so they are not Cilium endpoints and no pod-level ingress policy applies to them.
+#   * Anything from the `observability` namespace other than Prometheus. Grafana and Loki reads
+#     are same-namespace and live in `workloads/egress/observability.yaml`; Alloy never leaves
+#     its namespace except to the API server (a reserved identity, not a pod).
+#   * `world`. No rule below has a CIDR or FQDN peer.
+# ============================================================================
+---
+# CoreDNS's own metrics listener. 9153 is the prometheus-plugin port, NOT 53: the DNS service
+# port is already globally allowed by allow-dns-ingress-clusterwide and carries no verdicts.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-observability-prometheus-to-coredns
+  namespace: kube-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      k8s-app: kube-dns
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9153
+  policyTypes: ["Ingress"]
+---
+# Traefik's entrypoint/request metrics. Traefik has no ingress deny of its own today, so this
+# policy is additive and inert until one is added — it is authored now so the scrape is already
+# accounted for rather than becoming a silent gap later.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-observability-prometheus-to-traefik
+  namespace: traefik
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9100
+  policyTypes: ["Ingress"]
+---
+# The Temporal service mesh's metrics listeners. All four scalar components (frontend, history,
+# matching, worker) expose metrics on the same named port 9090; `web` and `admintools` do not
+# listen on it and are not scraped.
+#
+# REQUIRED, not optional: `default` carries `default-deny-ingress`, which selects every pod in
+# the namespace. Without this entry the Temporal dashboards would be empty and every scrape would
+# time out, while every Application still reported Healthy. This is the METRICS port — the
+# rpc/membership ports are already allowed by allow-temporal-mesh-and-clients.yaml.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-observability-prometheus-to-temporal
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: temporal
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+  policyTypes: ["Ingress"]
+---
+# Both CloudNativePG clusters' instance metrics. `app.kubernetes.io/name: postgresql` is shared by
+# `timestone` and `umvc3-db`; they are separated elsewhere (cnpg.io/cluster) when a policy needs
+# to distinguish them, but for a read-only scrape both are intended targets.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-observability-prometheus-to-cnpg-databases
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9187
+  policyTypes: ["Ingress"]
+---
+# The CloudNativePG operator's controller-runtime metrics (8080). Its webhook port (9443) is
+# deliberately absent: the API server is a reserved identity, not a pod in this namespace, and it
+# is already covered by allow-apiserver-to-cnpg-webhook.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-observability-prometheus-to-cnpg-operator
+  namespace: cnpg-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+  policyTypes: ["Ingress"]

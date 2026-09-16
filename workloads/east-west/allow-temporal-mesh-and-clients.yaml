@@ -11,7 +11,7 @@
 #   worker    membership=6939 metrics=9090
 #   web       http=8080
 #
-# Two clients are NOT temporal-labelled and would otherwise be blocked the
+# Three clients are NOT temporal-labelled and would otherwise be blocked the
 # moment the namespace-wide deny lands:
 #   * umvc3    — base/apps/umvc3/deployment.yaml:90 TEMPORAL_ADDRESS=
 #                http://temporal-frontend:7233 (gRPC to the frontend).
@@ -20,6 +20,11 @@
 #                the pod label `app: temporal-namespace-bootstrap`. It re-runs
 #                on every sync (hook-delete-policy BeforeHookCreation), so it
 #                must be allowed or every future sync fails at the hook.
+#   * oauth2-proxy-temporal — the Temporal UI auth gate. It reverse-proxies
+#                browser traffic to `temporal-web:8080`, which is the web
+#                component's http port, not the frontend's gRPC port. This is
+#                the ONLY path to that port: no route, and no other policy,
+#                exposes temporal-web.
 #
 # `podSelector` without a `namespaceSelector` means "pods in this policy's own
 # namespace", which is exactly the temporal mesh.
@@ -77,4 +82,18 @@ spec:
       ports:
         - protocol: TCP
           port: 7233
+    # The Temporal UI auth gate -> the web component.
+    #
+    # Scoped by port rather than by component label on purpose: this policy's
+    # own podSelector already covers every temporal pod, and only `web`
+    # listens on 8080, so the port is what makes the rule narrow. A policy
+    # that instead selected `app.kubernetes.io/component: web` as the target
+    # would need a second NetworkPolicy object for the same flow.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: oauth2-proxy-temporal
+      ports:
+        - protocol: TCP
+          port: 8080
   policyTypes: ["Ingress"]

@@ -1,0 +1,43 @@
+# Traefik -> the Temporal UI auth gate.
+# ============================================================================
+#
+# `temporal.hero-rehab.xyz` routes to `oauth2-proxy-temporal:4180`, NEVER to `temporal-web`
+# directly. This file is the ingress half of that decision: the proxy is the only pod in
+# `default` that may receive browser traffic on 4180, and Temporal Web itself is reached only by
+# the proxy, through the addition made to allow-temporal-mesh-and-clients.yaml.
+#
+# Mirrors base/apps/pocket-id/networkpolicy.yaml exactly — a single `matchLabels` pod selector and
+# a cross-namespace source — because these are translated from the Kubernetes NetworkPolicy API
+# into Cilium's model, and a selector Cilium cannot translate becomes a silently inert policy.
+# The namespace deny in `default` would land while the allow did nothing, taking the gate offline.
+#
+# Port 4180 is the pod's port: Service `oauth2-proxy-temporal` maps 4180 -> targetPort 4180, and
+# Gateway API backends are resolved to pod endpoints.
+#
+# No egress rule is needed here. The proxy's outbound needs (PocketID over the public FQDN,
+# Temporal Web, DNS) are in workloads/egress/default.yaml, which is where every other pod's
+# egress in this namespace lives. Keeping the two halves in their proper directories means each
+# can be reverted on its own without leaving a half-applied change.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-to-oauth2-proxy-temporal
+  namespace: default
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app: oauth2-proxy-temporal
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 4180
+  policyTypes: ["Ingress"]

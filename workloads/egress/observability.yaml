@@ -1,0 +1,696 @@
+# Egress + ingress policy for `observability`, plus its namespace-wide denies.
+# ============================================================================
+#
+# SAME SHAPE AS EVERY FILE IN `workloads/egress/`:
+#
+#   `default-deny-egress`   k8s NetworkPolicy, podSelector {}, Egress only.
+#   `allow-*-egress`        one CiliumNetworkPolicy per workload, carrying only
+#                           the destinations that workload is justified in
+#                           reaching.
+#
+# Why a Kubernetes NetworkPolicy for the deny rather than an empty CiliumNetworkPolicy: Cilium
+# rejects a CNP whose rule list is empty ("rule must have at least one of Ingress, IngressDeny,
+# Egress, EgressDeny"), so `egress: []` is not merely unenforced — it is INVALID and the
+# controller marks the policy Valid=False. A k8s NetworkPolicy with policyTypes: ["Egress"] and
+# no rules is the one form that actually means "deny all egress".
+#
+# WHY THIS FILE ALSO CARRIES THE INGRESS HALF
+#
+# `observability` is a brand-new namespace created by `observability-namespace` (wave 8), so it
+# has none of the baseline ingress that pre-existing namespaces picked up in earlier stages.
+# Two things are true at once the moment the first pod schedules here:
+#
+#   1. `CiliumClusterwideNetworkPolicy/default-deny-cluster` selects EVERY Cilium-managed
+#      endpoint, so both directions are deny-by-default for these pods from the start. Nothing
+#      reaches them and they reach nothing unless a policy says otherwise.
+#   2. This namespace additionally carries its own `default-deny-ingress` and
+#      `default-deny-egress`, which keep the invariant if the cluster-wide object is ever
+#      removed or reverted.
+#
+# The intra-namespace ingress allows (Prometheus scraping its own peers, Alloy pushing to Loki,
+# Grafana reading both stores) therefore belong HERE, in the same file and the same commit as
+# both denies. Splitting them across files would create a window in which the deny exists
+# without its allows.
+#
+# WHAT IS DELIBERATELY *NOT* HERE
+#
+#   * Prometheus's ingress to CoreDNS/Traefik/Temporal/PostgreSQL/CNPG-operator. Those targets
+#     live in other namespaces, and a per-namespace policy cannot reach them; they are in
+#     `workloads/east-west/allow-observability-scrapes.yaml`.
+#   * node-exporter (9100), kubelet (10250) and the Cilium/Hubble agent ports (9962/9965). Those
+#     endpoints are hostNetwork, so they are not Cilium endpoints and pod-level ingress policy
+#     never applies to them. Only the *egress* from Prometheus towards the `host`/`remote-node`
+#     reserved identities has to be stated, which the Prometheus rule below does.
+#   * `world`. This file grants no blanket internet access; each external destination is an
+#     explicit FQDN rule with the house L7 DNS rule beside it.
+# ============================================================================
+---
+# Prometheus Operator. A controller: it watches the Prometheus/Alertmanager CRs and owns the
+# generated StatefulSets, Services and scrape configs. Without API egress it goes silent and the
+# stack stops being reconciled.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-prometheus-operator-egress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      # Verified from the rendered chart 91.4.1: the operator Deployment's pod template carries
+      # `app: kube-prometheus-stack-operator` (and release kube-prometheus-stack).
+      app: kube-prometheus-stack-operator
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+---
+# kube-state-metrics. Scrapes the API for object state and exposes it on 8080.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kube-state-metrics-egress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      # Verified from the rendered chart: app.kubernetes.io/name: kube-state-metrics.
+      app.kubernetes.io/name: kube-state-metrics
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+---
+# Prometheus itself — the widest egress set in the stack, because it is the scraper.
+#
+# Every destination below corresponds to one scrape job or one runtime dependency:
+#
+#   kubelet 10250, node-exporter 9100, Cilium agent 9962, Hubble 9965
+#       All four are hostNetwork, so they present as the `host` / `remote-node`
+#       reserved identities rather than as pod endpoints. They cannot be named
+#       with `toEndpoints`; `toEntities` is the only form that matches.
+#       node-exporter and the Cilium agent are the reason the `observability`
+#       namespace enforces PodSecurity `privileged` (hostNetwork + hostPath).
+#
+#   kube-state-metrics 8080, Alertmanager 9093, Prometheus 9090
+#       Same-namespace scrape targets. Prometheus scrapes ITSELF for its own
+#       TSDB/head/rule metrics, which is why the source selector below also
+#       appears as a destination.
+#
+#   CoreDNS 9153, Traefik 9100, Temporal 9090, PostgreSQL 9187, CNPG operator 8080
+#       Cross-namespace pull targets. The matching INGRESS allowance lives in
+#       `workloads/east-west/allow-observability-scrapes.yaml` — under the
+#       cluster-wide deny, an egress rule alone is not enough; the destination
+#       namespace must also permit the connection.
+#
+# Node-exporter in particular is NOT optional: without the 9100 rule the entire
+# `node`/`node-exporter` rule groups evaluate against no data and the capacity
+# dashboard is empty, while every Application still reports Healthy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-prometheus-egress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      # Set by the Prometheus Operator on the StatefulSet it generates, not by Helm.
+      app.kubernetes.io/name: prometheus
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            # kube-apiserver (the /api, /apis, node and kubelet scrape targets
+            # that go through the API server rather than the node directly).
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+            # kubelet (read-only metrics + cadvisor endpoints).
+            - port: "10250"
+              protocol: TCP
+            # node-exporter DaemonSet.
+            - port: "9100"
+              protocol: TCP
+            # Cilium agent metrics and the Hubble metrics endpoint.
+            - port: "9962"
+              protocol: TCP
+            - port: "9965"
+              protocol: TCP
+    # Same-namespace peers.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: kube-state-metrics
+            io.kubernetes.pod.namespace: observability
+        - matchLabels:
+            app.kubernetes.io/name: alertmanager
+            io.kubernetes.pod.namespace: observability
+        - matchLabels:
+            app.kubernetes.io/name: prometheus
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+            - port: "9090"
+              protocol: TCP
+            - port: "9093"
+              protocol: TCP
+    # CoreDNS's own metrics endpoint.
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "9153"
+              protocol: TCP
+    # Traefik's entrypoint/request metrics.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: traefik
+            io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "9100"
+              protocol: TCP
+    # The Temporal service mesh's metrics listeners (all four components expose
+    # metrics on 9090; `web` and `admintools` do not and are not scraped).
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: temporal
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    # Both CloudNativePG clusters.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: postgresql
+            io.kubernetes.pod.namespace: default
+      toPorts:
+        - ports:
+            - port: "9187"
+              protocol: TCP
+    # The CloudNativePG operator's controller-runtime metrics.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: cloudnative-pg
+            io.kubernetes.pod.namespace: cnpg-system
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+# Alertmanager -> ntfy.
+#
+# One destination only. The notification path is a webhook to the ntfy topic created in
+# Step 1; the topic's URL is mounted from the `alertmanager-ntfy` Secret at
+# /etc/alertmanager/secrets/alertmanager-ntfy/url and referenced with `url_file`.
+#
+# This is a `world` destination: ntfy.sh resolves to public addresses, not to a pod. The L7 DNS
+# rule beside it is what lets Cilium learn the corresponding addresses — without it the
+# `toFQDNs` rule would match nothing and every alert would be silently undeliverable.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-alertmanager-egress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      # Set by the Prometheus Operator on the generated Alertmanager StatefulSet.
+      app.kubernetes.io/name: alertmanager
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: ntfy.sh
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+# Loki -> Hetzner Object Storage, plus its own single-replica ring.
+#
+# S3 is the durable half of Loki: chunks and the TSDB index live in the two `fsn1` buckets from
+# Step 1, and the attached volume only holds WAL and compactor state. Without this rule Loki
+# starts, fails every flush, and reports not-ready.
+#
+# The `fsn1.your-objectstorage.com` endpoint is a public FQDN, so this is again a `world`
+# destination expressed as an FQDN with the L7 DNS rule beside it.
+#
+# The memberlist self-rules are NOT optional. The rendered config sets
+#   memberlist.join_members: [loki-memberlist.observability.svc.cluster.local]
+#   memberlist.abort_if_cluster_join_fails: true
+# `abort_if_cluster_join_fails` means a failed join is a fatal startup error, not a warning. With
+# a single replica the join target resolves to the pod's OWN IP, which is still a Cilium endpoint
+# in this namespace, so the namespace-wide egress deny would otherwise drop Loki's gossip to
+# itself and the pod would exit. `common.compactor_grpc_address` points at the same pod on 9095.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-loki-egress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+      app.kubernetes.io/component: single-binary
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toFQDNs:
+        - matchName: fsn1.your-objectstorage.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: loki
+            app.kubernetes.io/component: single-binary
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "7946"
+              protocol: TCP
+            - port: "7946"
+              protocol: UDP
+            - port: "9095"
+              protocol: TCP
+---
+# Alloy — the log collector.
+#
+# It tails pod logs THROUGH THE KUBERNETES API (`loki.source.kubernetes`), not by mounting
+# /var/log, so its only data-plane destinations are the API server, Loki, and the other Alloy
+# pods in its own clustering ring.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-alloy-egress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: loki
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "3100"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: alloy
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "12345"
+              protocol: TCP
+---
+# Grafana.
+#
+# Two distinct egress purposes:
+#
+#   * The dashboard sidecar watches ConfigMaps through the Kubernetes API, so it needs API
+#     egress exactly like the other controllers here.
+#   * The browser-facing OIDC flow needs `id.hero-rehab.xyz` on 443. That hostname is the public
+#     PocketID route, which terminates at the Cloudflare edge and only then reaches Traefik, so
+#     from inside the cluster it is a `world` address: an FQDN rule, never a pod selector.
+#     Pointing this at the pocket-id pod or Service would NOT work and would produce a
+#     confusing "connection refused/timeout" at login.
+#
+# Prometheus 9090 and Loki 3100 are same-namespace datasource reads.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-grafana-egress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    - toFQDNs:
+        - matchName: id.hero-rehab.xyz
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: prometheus
+            io.kubernetes.pod.namespace: observability
+        - matchLabels:
+            app.kubernetes.io/name: loki
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+            - port: "3100"
+              protocol: TCP
+---
+# Ingress: kube-state-metrics <- Prometheus.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-to-kube-state-metrics
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kube-state-metrics
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+  policyTypes: ["Ingress"]
+---
+# Ingress: Prometheus <- Prometheus (self-scrape) and <- Grafana (datasource queries).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-scrapes-and-queries-to-prometheus
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 9090
+  policyTypes: ["Ingress"]
+---
+# Ingress: Alertmanager <- Prometheus (alert delivery).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-to-alertmanager
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9093
+  policyTypes: ["Ingress"]
+---
+# Ingress: Loki <- Alloy (push) and <- Grafana (queries), plus Loki's own ring.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-writes-and-queries-to-loki
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+      app.kubernetes.io/component: single-binary
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 3100
+    # The single-replica memberlist ring and the compactor gRPC address both
+    # point at this same pod. See allow-loki-egress for why this cannot be omitted.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+              app.kubernetes.io/component: single-binary
+      ports:
+        - protocol: TCP
+          port: 7946
+        - protocol: UDP
+          port: 7946
+        - protocol: TCP
+          port: 9095
+  policyTypes: ["Ingress"]
+---
+# Ingress: Alloy <- Alloy peers (its clustering ring).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-alloy-peers
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+      ports:
+        - protocol: TCP
+          port: 12345
+  policyTypes: ["Ingress"]
+---
+# Ingress: Grafana <- Traefik.
+#
+# Grafana's route lives in THIS namespace (its backend Service is namespaced here), while the
+# Gateway lives in `default`. Gateway API resolves backendRefs only within the Route's own
+# namespace, which is why this is a same-namespace NetworkPolicy with a cross-namespace SOURCE,
+# rather than a policy over in `workloads/east-west/`.
+#
+# Port 3000 is the pod's port: the chart's Service maps 80 -> targetPort `grafana` (3000), and
+# Gateway API backends are resolved to pod endpoints.
+#
+# This is the ONLY path to Grafana. There is no second allow for Prometheus, Loki or the API
+# server, and no allow at all for the observability namespace to reach Grafana — the browser
+# path terminates at Traefik.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-to-grafana
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 3000
+  policyTypes: ["Ingress"]
+---
+# The namespace-wide ingress default-deny.
+#
+# Defence in depth. `default-deny-cluster` already denies ingress to every Cilium endpoint, so
+# this changes nothing today — and that is the point: it keeps the namespace closed on its own
+# if the cluster-wide object is reverted, edited or deleted, which is exactly the operation the
+# Stage-4 rollback runbook describes.
+#
+# Host-network workloads in this namespace are not selected (they are not Cilium endpoints).
+# node-exporter is hostNetwork, so this deny does not interfere with the local kubelet's probes.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+# The namespace-wide egress default-deny. Same reasoning as the ingress deny above, and the
+# reason every allow in this file is authored at wave 5: Argo applies lower waves first, so
+# there is no window in which the deny exists alone.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
