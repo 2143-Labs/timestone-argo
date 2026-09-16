@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: umvc3
-          image: ghcr.io/2143-labs/steam-lobby@sha256:971d4638dc3ef7c56d763fb8665a126f14f6a2e933afaf89f37c32bd8340b78d
+          image: ghcr.io/2143-labs/steam-lobby@sha256:0a1cd59972d5fe40fc723183315058c968f5518ebd49f04f7507f30450407d16
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
