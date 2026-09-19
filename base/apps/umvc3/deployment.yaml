@@ -66,8 +66,13 @@ spec:
               value: "false"
             - name: STEAM_BACKED_ACCOUNTS_ONLY
               value: "true"
+            # Without this the process logs nothing at all: tracing-subscriber's
+            # fmt::init() reads RUST_LOG, and an unset RUST_LOG is an empty
+            # filter, so even the startup line is dropped.
+            - name: RUST_LOG
+              value: info,lobby_server=debug
             - name: RANKED_QUEUE_ENABLED
-              value: "false"
+              value: "true"
             - name: RANKED_QUEUE_LEASE_S
               value: "45"
             - name: STEAM_APP_ID
