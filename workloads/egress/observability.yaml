@@ -431,11 +431,14 @@ spec:
 #
 #   * The dashboard sidecar watches ConfigMaps through the Kubernetes API, so it needs API
 #     egress exactly like the other controllers here.
-#   * The browser-facing OIDC flow needs `id.hero-rehab.xyz` on 443. That hostname is the public
-#     PocketID route, which terminates at the Cloudflare edge and only then reaches Traefik, so
-#     from inside the cluster it is a `world` address: an FQDN rule, never a pod selector.
-#     Pointing this at the pocket-id pod or Service would NOT work and would produce a
-#     confusing "connection refused/timeout" at login.
+#   * The browser-facing OIDC flow needs `au.2143.me` on 443. That hostname is the canonical
+#     PocketID issuer (the 2143 Labs org instance), served directly from the public internet,
+#     so from inside the cluster it is a `world` address: an FQDN rule, never a pod selector.
+#     Pointing this at the in-cluster pocket-id pod or Service would NOT work and would produce
+#     a confusing "connection refused/timeout" at login, because Grafana dials the public issuer
+#     hostname, not the Service. The cluster instance at id.hero-rehab.xyz is being retired and
+#     is deliberately NOT allowed here: a client configured with issuer au.2143.me cannot
+#     complete a flow against a different issuer anyway.
 #
 # Prometheus 9090 and Loki 3100 are same-namespace datasource reads.
 apiVersion: cilium.io/v2
@@ -474,7 +477,7 @@ spec:
             - port: "6443"
               protocol: TCP
     - toFQDNs:
-        - matchName: id.hero-rehab.xyz
+        - matchName: au.2143.me
       toPorts:
         - ports:
             - port: "443"

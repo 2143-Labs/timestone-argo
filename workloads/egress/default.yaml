@@ -409,12 +409,12 @@ spec:
 #   1. Cluster DNS, through the L7 proxy. Required for the FQDN rule below:
 #      Cilium only learns FQDN->IP from observed DNS answers, and only when an
 #      L7 `rules.dns` block puts the DNS proxy in the path. Without it the
-#      `id.hero-rehab.xyz` rule matches nothing and every login fails.
-#   2. `id.hero-rehab.xyz` on 443 — the PocketID issuer's discovery document,
-#      token endpoint and JWKS. This is the PUBLIC route, which terminates at
-#      the Cloudflare edge and only then reaches Traefik, so from inside the
-#      cluster it is a `world` address. Allowing the pocket-id pod instead
-#      would not work: the proxy dials the public hostname, not the Service.
+#      `au.2143.me` rule matches nothing and every login fails.
+#   2. `au.2143.me` on 443 — the canonical PocketID issuer's discovery document,
+#      token endpoint and JWKS. That host is served directly from the public
+#      internet, so from inside the cluster it is a `world` address. Allowing the
+#      in-cluster pocket-id pod instead would not work: the proxy dials the public
+#      issuer hostname, not the Service.
 #   3. Temporal Web on 8080 (the `--upstream` target). Port 8080 is the web
 #      component's http port, not the frontend's gRPC port.
 #
@@ -448,7 +448,7 @@ spec:
             dns:
               - matchPattern: "*"
     - toFQDNs:
-        - matchName: id.hero-rehab.xyz
+        - matchName: au.2143.me
       toPorts:
         - ports:
             - port: "443"

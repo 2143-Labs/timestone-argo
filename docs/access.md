@@ -58,6 +58,57 @@ browser session, so gating it would break both.
 Do not add an Access application there. It is also pinned in SPIRE's
 `jwtIssuer`, so the hostname must not change either.
 
+## Identity: the canonical PocketID is `au.2143.me`
+
+There are two separate PocketID deployments. **`au.2143.me` (appName "2143 Labs")
+is canonical**; the in-cluster instance at `id.hero-rehab.xyz` is being retired.
+
+They are genuinely independent, not one instance behind two names:
+
+| | `au.2143.me` (canonical) | `id.hero-rehab.xyz` (retiring) |
+|---|---|---|
+| Issuer | `https://au.2143.me` | `https://id.hero-rehab.xyz` |
+| JWKS key id | `jlrwgdxIu9w` | `2YKEYRfq3Ss` |
+| `requireUserEmail` | `true` | `false` |
+| `emailVerificationEnabled` | `true` | `false` |
+| `emailOneTimeAccessAsAdminEnabled` | `true` | `false` |
+| Hosting | residential line, direct A record, no Cloudflare proxy | Hetzner cluster, Cloudflare tunnel |
+
+Different issuers and different signing keys mean different user stores: users,
+groups, OIDC clients and passkeys do **not** transfer between them.
+
+Grafana and the Temporal `oauth2-proxy` both authenticate against the canonical
+issuer, so their egress allowlists in `workloads/egress/observability.yaml` and
+`workloads/egress/default.yaml` permit `au.2143.me:443` as an **FQDN** rule. That
+host is a public `world` address from inside the cluster; pointing the rule at
+the in-cluster `pocket-id` Service would not work, because those clients dial the
+public issuer hostname, not the Service.
+
+### Two consequences worth knowing before you touch this
+
+**Passkeys are bound to the hostname.** PocketID sets
+`RPID: utils.GetHostnameFromURL(deps.AppURL)` (`webauthn/service.go:43`), so a
+passkey enrolled at one instance cannot be used at the other, and changing
+`APP_URL` on a live instance invalidates **every** existing passkey on it —
+including your own. Never change `APP_URL` on an instance you are logged into.
+Users must re-enrol on the canonical instance.
+
+**Access availability now depends on a home internet circuit.** `au.2143.me`
+resolves to a Verizon Fios residential address and serves TLS itself
+(`CN=*.2143.me`, Let's Encrypt) with no Cloudflare proxy in front. If that circuit
+or the host is down, the Cloudflare edge cannot complete the token exchange and
+every Access-gated application becomes unreachable. This is accepted, not
+overlooked: the trade is that the org instance is the only one that requires and
+verifies email and has admin email recovery enabled — the cluster instance has
+neither, which is what made the earlier lockout unrecoverable.
+
+### Do not gate the IdP
+
+Cloudflare's edge must reach the issuer **unauthenticated** to fetch the JWKS and
+exchange the authorization code. Putting an Access application on the IdP would be
+circular and would break every login. `au.2143.me` must stay anonymous, exactly
+like `id.hero-rehab.xyz` before it and `spiffe.hero-rehab.xyz` above.
+
 ## Break-glass to the cluster
 
 If a network-policy change makes the tunnel path unusable, the recovery is the
